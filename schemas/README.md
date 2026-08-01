@@ -29,7 +29,7 @@ These schemas are the machine contract for laws, packs, toolchains, consumer con
 
 ## Related
 
-Law IDs referenced by `implements`, `declines`, `supersedes`, and `related` fields across these schemas are validated by `law.schema.json`.
+None of these schemas share a law ID field by reference. Each schema that holds a law ID shaped value constrains it with its own inline `^EEP-` prefix pattern: `implements` and `declines.law` in `pack.schema.json`, `related` in `law.schema.json`, and `law` in `waivers.schema.json`. The `supersedes` field in `law.schema.json` carries no pattern at all. Only the `id` field inside `law.schema.json` enforces the full law ID shape, the pattern `^EEP-[A-Z]{2,5}-[0-9]{2}$`. The one genuine reference between these schema files is `pack.schema.json`, whose `toolchain` property points at `toolchain.schema.json` with `$ref`.
 
 ---
 *Authored by Samar Swami (@samar1066) · Maintained by @samar1066 · v1.0.0 · Last reviewed 2026-08-01*
