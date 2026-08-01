@@ -15,6 +15,8 @@ updated: <YYYY-MM-DD>
 
 ## What this pack gives you
 
+<Three to five bullets: the golden path, the blessed toolchain, templates, executable checks.>
+
 ## Laws implemented
 
 <Law ID list.>
@@ -34,4 +36,4 @@ updated: <YYYY-MM-DD>
 <Law IDs and pack names only.>
 
 ---
-*Authored by <Full Name> (@<handle>) · Maintained by @<handle> · vX.Y.Z · Last reviewed <YYYY-MM-DD>*
+*Authored by <Full Name> (@<handle>) · Maintained by @<handle> · v1.0.0 · Last reviewed <YYYY-MM-DD>*
