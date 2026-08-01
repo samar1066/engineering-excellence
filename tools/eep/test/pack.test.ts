@@ -234,6 +234,82 @@ ${FIXTURE_AUTHORS}
   return join(root, "packs/stack/escape-pack");
 }
 
+// pack.yaml with an unterminated flow sequence: confirmed above to throw a YAMLParseError from
+// the "yaml" package rather than parse to some degraded value.
+function buildMalformedPackYaml(): string {
+  const root = newFixtureRoot("eep-pack-malformed-yaml-");
+  writeFixtureFile(root, "eep.yaml", "");
+  writeFixtureFile(
+    root,
+    "packs/stack/malformed-pack/pack.yaml",
+    "name: malformed-pack\nkind: [stack\n",
+  );
+  return join(root, "packs/stack/malformed-pack");
+}
+
+// No pack.yaml (and no pack directory at all) under an otherwise real fixture root, so the read
+// itself throws ENOENT rather than any YAML parser ever getting involved.
+function buildMissingPackYaml(): string {
+  const root = newFixtureRoot("eep-pack-missing-yaml-");
+  writeFixtureFile(root, "eep.yaml", "");
+  return join(root, "packs/stack/missing-pack");
+}
+
+// One doctrine law with an unterminated flow sequence in its frontmatter (confirmed above to
+// throw a YAMLException out of gray-matter) alongside one perfectly valid, deliberately uncovered
+// doctrine law, plus a pack.yaml that is otherwise fully in order. Proves loadDoctrineLaws skips
+// only the broken file and keeps processing the rest, so the run still completes and still
+// reports the unrelated law-coverage violation for the good law, not just the parse error alone.
+function buildPackWithBrokenDoctrineLaw(): string {
+  const root = newFixtureRoot("eep-pack-broken-law-");
+  writeFixtureFile(root, "eep.yaml", "");
+  writeFixtureFile(
+    root,
+    "doctrine/fixture/laws/EEP-BAD-01.md",
+    "---\nid: EEP-BAD-01\napplies_to: [oops\n---\n\n## Statement\n\nWhatever is fine here.\n",
+  );
+  writeFixtureFile(
+    root,
+    "doctrine/fixture/laws/EEP-OK-01.md",
+    lawFixture("EEP-OK-01", "all", "Fixture good law must stay covered by every stack pack."),
+  );
+  writeFixtureFile(
+    root,
+    "packs/stack/broken-law-pack/pack.yaml",
+    `name: broken-law-pack
+kind: stack
+version: 1.0.0
+tier: 1
+source: builtin
+detect:
+  - file: pyproject.toml
+requires: []
+implements:
+  - EEP-BAD-01
+declines: []
+toolchain: {}
+${FIXTURE_AUTHORS}
+`,
+  );
+  writeFixtureFile(
+    root,
+    "packs/stack/broken-law-pack/checks/manifest.yaml",
+    `checks:
+  - law: EEP-BAD-01
+    kind: shell
+    command: "true"
+    proves: "Fixture proof text for the broken law pack."
+`,
+  );
+  writeFixtureFile(
+    root,
+    "packs/stack/broken-law-pack/bindings/EEP-BAD-01.md",
+    bindingFixture("EEP-BAD-01", "This fixture stack explains the law without quoting it."),
+  );
+  writeFixtureFile(root, "packs/stack/broken-law-pack/README.md", "# broken-law-pack\n");
+  return join(root, "packs/stack/broken-law-pack");
+}
+
 describe("pack contract", () => {
   it("loads the real pack", () => {
     const pack = loadPack(packDir);
@@ -314,5 +390,43 @@ describe("pack contract", () => {
     expect(violations).toHaveLength(1);
     expect(violations[0]).toMatchObject({ rule: "standalone-readme", line: 3 });
     expect(violations[0]?.detail).toContain("outside.md");
+  });
+
+  it("reports malformed pack.yaml as a violation instead of throwing", async () => {
+    const dir = buildMalformedPackYaml();
+    // Awaiting directly (no try/catch) is the assertion: if validatePack rejected instead of
+    // resolving, this test would fail here rather than reach the expectations below.
+    const violations = await validatePack(dir);
+    expect(violations).toHaveLength(1);
+    expect(violations[0]?.rule).toBe("pack-parse-error");
+    expect(violations[0]?.path).toContain("pack.yaml");
+    expect(violations[0]?.line).toBe(1);
+    expect(violations[0]?.detail.length).toBeGreaterThan(0);
+  });
+
+  it("reports a missing pack.yaml as a violation instead of throwing", async () => {
+    const dir = buildMissingPackYaml();
+    const violations = await validatePack(dir);
+    expect(violations).toHaveLength(1);
+    expect(violations[0]?.rule).toBe("pack-parse-error");
+    expect(violations[0]?.path).toContain("pack.yaml");
+    expect(violations[0]?.detail).toMatch(/ENOENT/i);
+  });
+
+  it("skips one malformed doctrine law but still runs the rest of the contract", async () => {
+    const dir = buildPackWithBrokenDoctrineLaw();
+    const violations = await validatePack(dir);
+
+    const parseError = violations.find((v) => v.rule === "pack-parse-error");
+    expect(parseError?.path).toContain("EEP-BAD-01.md");
+    expect(parseError?.line).toBe(1);
+    expect(parseError?.detail.length).toBeGreaterThan(0);
+
+    // The unrelated, perfectly valid EEP-OK-01 law is left uncovered on purpose: this only shows
+    // up if loadDoctrineLaws kept going past the broken file instead of aborting the whole scan.
+    const lawCoverage = violations.find((v) => v.rule === "law-coverage");
+    expect(lawCoverage?.detail).toContain("EEP-OK-01");
+
+    expect(violations).toHaveLength(2);
   });
 });

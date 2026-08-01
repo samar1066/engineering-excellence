@@ -34,6 +34,15 @@ const COVERAGE_APPLIES_TO = new Set(["all", "backend", "docs", "corpus"]);
 // [text](target). Reference-style links, HTML anchors, and bare prose mentions are out of scope.
 const LINK_PATTERN = /\[[^\]]*\]\(([^)]+)\)/g;
 
+// Mirrors commands/corpus.ts's own describeParseError: a missing-file (ENOENT) or malformed-YAML
+// error's first message line is already a concise, single-line description (js-yaml/yaml errors
+// put a source snippet with a caret on the following lines; Node fs errors are one line already).
+function describeParseError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  const [firstLine] = message.split("\n");
+  return (firstLine ?? message).trim();
+}
+
 function parseYamlObject(path: string): Record<string, unknown> {
   const parsed: unknown = parseYaml(readFileSync(path, "utf8"));
   if (parsed === null || typeof parsed !== "object") return {};
@@ -129,16 +138,40 @@ function checkImplementsBindingsAndChecks(
   return violations;
 }
 
-async function loadDoctrineLaws(root: string): Promise<DoctrineLaw[]> {
+// Doctrine law discovery feeds assertions 4 and 6 for every pack that runs validatePack, so one
+// law file with malformed frontmatter anywhere in the corpus must not take down every pack's
+// validation. Each file is parsed independently: a failure is reported as its own violation and
+// that file is skipped, exactly like corpus.ts's checkLawFile does for the same failure mode, and
+// every other file still gets processed normally.
+async function loadDoctrineLaws(
+  root: string,
+): Promise<{ laws: DoctrineLaw[]; violations: Violation[] }> {
   const files = (await fg("doctrine/*/laws/*.md", { cwd: root })).sort();
   const laws: DoctrineLaw[] = [];
+  const violations: Violation[] = [];
   for (const relPath of files) {
-    const { data, body } = readFrontmatter(join(root, relPath));
-    const id = typeof data.id === "string" ? data.id : undefined;
+    let parsed: { data: Record<string, unknown>; body: string };
+    try {
+      parsed = readFrontmatter(join(root, relPath));
+    } catch (error) {
+      violations.push({
+        path: relPath,
+        line: 1,
+        rule: "pack-parse-error",
+        detail: describeParseError(error),
+      });
+      continue;
+    }
+    const id = typeof parsed.data.id === "string" ? parsed.data.id : undefined;
     if (!id) continue;
-    laws.push({ id, appliesTo: toStringArray(data.applies_to), path: relPath, body });
+    laws.push({
+      id,
+      appliesTo: toStringArray(parsed.data.applies_to),
+      path: relPath,
+      body: parsed.body,
+    });
   }
-  return laws;
+  return { laws, violations };
 }
 
 // Assertion 4: every doctrine law in scope must be implemented or declined by this pack.
@@ -286,20 +319,65 @@ function checkStandaloneReadme(root: string, dir: string): Violation[] {
   return violations;
 }
 
+// validatePack deliberately does not call loadPack: loadPack's job (see Task 14's resolve.ts,
+// which needs a Pack or a thrown error) is to throw on a broken pack.yaml or checks manifest, and
+// that contract is left alone. validatePack instead calls the same underlying parseYamlObject /
+// readChecksManifest primitives itself, each wrapped in its own try/catch, so a parse failure
+// becomes a Violation, the Promise<Violation[]> contract never rejects for these causes, and the
+// two failure points still get distinct, precisely attributed paths in the report.
 export async function validatePack(packDir: string): Promise<Violation[]> {
   const dir = resolve(packDir);
   const root = repoRoot(dir);
-  const pack = loadPack(dir);
-  const implementsList = toStringArray(pack.manifest.implements);
-  const declinedLawIds = toDeclinedLawIds(pack.manifest.declines);
-  const doctrineLaws = await loadDoctrineLaws(root);
+  const manifestPath = join(dir, "pack.yaml");
 
-  return [
-    ...checkManifestSchema(root, dir, pack.manifest),
-    ...checkImplementsBindingsAndChecks(root, dir, implementsList, pack.checks),
+  // A pack.yaml that is missing or fails to parse leaves nothing else meaningful to validate: no
+  // name, no implements, no toolchain. Report it alone and stop, the same way corpus.ts's
+  // checkLawFile stops after a law file fails to parse rather than validating undefined data.
+  let manifest: Record<string, unknown>;
+  try {
+    manifest = parseYamlObject(manifestPath);
+  } catch (error) {
+    return [
+      {
+        path: relative(root, manifestPath),
+        line: 1,
+        rule: "pack-parse-error",
+        detail: describeParseError(error),
+      },
+    ];
+  }
+
+  const violations: Violation[] = [];
+
+  // Unlike pack.yaml, a checks manifest that fails to parse still leaves a fully usable manifest
+  // behind (name, implements, declines, toolchain), so degrade to an empty checks list and keep
+  // running every other assertion instead of aborting the whole validation.
+  let checks: CheckEntry[];
+  try {
+    checks = readChecksManifest(dir);
+  } catch (error) {
+    checks = [];
+    violations.push({
+      path: relative(root, join(dir, "checks", "manifest.yaml")),
+      line: 1,
+      rule: "pack-parse-error",
+      detail: describeParseError(error),
+    });
+  }
+
+  const implementsList = toStringArray(manifest.implements);
+  const declinedLawIds = toDeclinedLawIds(manifest.declines);
+  const { laws: doctrineLaws, violations: doctrineViolations } = await loadDoctrineLaws(root);
+
+  violations.push(
+    ...checkManifestSchema(root, dir, manifest),
+    ...checkImplementsBindingsAndChecks(root, dir, implementsList, checks),
+    ...doctrineViolations,
     ...checkLawCoverage(root, dir, doctrineLaws, implementsList, declinedLawIds),
-    ...checkToolchainConfigsExist(root, dir, pack.manifest.toolchain),
+    ...checkToolchainConfigsExist(root, dir, manifest.toolchain),
     ...checkNoStatementRestatement(root, dir, implementsList, doctrineLaws),
     ...checkStandaloneReadme(root, dir),
-  ];
+  );
+
+  return violations;
 }
