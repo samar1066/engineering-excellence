@@ -89,10 +89,31 @@ function checkMarkdownStyle(root: string, relPath: string): Violation[] {
   }));
 }
 
+// gray-matter/js-yaml errors (YAMLException) carry a multi-line `.message` with a source snippet
+// and caret under the offending column. The first line already states the reason plus the line
+// and column, so that alone makes a concise, single-line violation detail.
+function describeParseError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  const [firstLine] = message.split("\n");
+  return (firstLine ?? message).trim();
+}
+
 function checkLawFile(root: string, relPath: string): Violation[] {
-  const violations: Violation[] = [];
   const fullPath = join(root, relPath);
-  const { data, body } = readFrontmatter(fullPath);
+
+  // Malformed YAML between the frontmatter delimiters makes gray-matter/js-yaml throw. Without
+  // this guard, that throw would propagate out of validateCorpus and abort the whole command
+  // before any other file's violations are reported. Catching it here turns one bad file into a
+  // single reported violation instead of a stack trace that silences everything else.
+  let parsed: { data: Record<string, unknown>; body: string };
+  try {
+    parsed = readFrontmatter(fullPath);
+  } catch (error) {
+    return [{ path: relPath, line: 1, rule: "law-parse-error", detail: describeParseError(error) }];
+  }
+
+  const violations: Violation[] = [];
+  const { data, body } = parsed;
   const normalized = normalizeFrontmatterDates(data);
 
   const { valid, errors } = validateAgainst("law", normalized);
