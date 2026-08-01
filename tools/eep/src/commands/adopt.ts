@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { createInterface } from "node:readline/promises";
 import type { Command } from "commander";
@@ -78,10 +78,23 @@ function buildEepYamlContent(profile: AdoptProfile, packs: string[]): string {
 // Installs the pre-commit gate when the target is a git checkout. When it is not, the rest of
 // adoption (vendoring, eep.yaml, the agent files) is still useful on its own, so this warns
 // instead of throwing and lets the caller keep going.
+//
+// ".git exists" is not the same as "a hooks directory can live under it": in a worktree or a
+// submodule checkout, ".git" is a plain file containing a "gitdir: <path>" pointer, not a
+// directory. mkdirSync would throw a raw ENOTDIR trying to create a "hooks" child of a file, and
+// by the time this function runs, vendorInto/eep.yaml/generateAgentFiles have already succeeded,
+// so that throw would surface as a confusing partial-failure instead of the same clean warn-and
+// continue path the "no .git at all" case already takes.
 function installGitHook(targetDir: string): void {
   const gitDir = join(targetDir, ".git");
   if (!existsSync(gitDir)) {
     console.warn("eep: no .git directory; pre-commit hook not installed");
+    return;
+  }
+  if (!statSync(gitDir).isDirectory()) {
+    console.warn(
+      "eep: .git is not a directory (worktree or submodule); pre-commit hook not installed",
+    );
     return;
   }
   const hooksDir = join(gitDir, "hooks");

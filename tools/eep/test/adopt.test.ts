@@ -58,6 +58,21 @@ describe("runAdopt", () => {
     expect(existsSync(join(targetDir, ".git"))).toBe(false);
   });
 
+  it("adopts a worktree style directory where .git is a file: resolves, installs no hook", async () => {
+    const targetDir = newTargetDir("eep-adopt-worktree-");
+    writeFileSync(join(targetDir, ".git"), "gitdir: /elsewhere\n");
+    writeFastApiPyproject(targetDir);
+
+    const result = await runAdopt({ targetDir, corpusDir, profile: "evolving", yes: true });
+
+    expect(result.packs).toEqual(["python-fastapi"]);
+    expect(existsSync(join(targetDir, ".eep", "lock.yaml"))).toBe(true);
+    expect(existsSync(join(targetDir, "AGENTS.md"))).toBe(true);
+    expect(existsSync(join(targetDir, "CLAUDE.md"))).toBe(true);
+    expect(existsSync(join(targetDir, "eep.yaml"))).toBe(true);
+    expect(existsSync(join(targetDir, ".git", "hooks", "pre-commit"))).toBe(false);
+  });
+
   it("rejects when no pack is detected, naming the supported packs", async () => {
     const targetDir = newTargetDir("eep-adopt-nomatch-");
 
