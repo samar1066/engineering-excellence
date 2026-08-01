@@ -38,6 +38,8 @@ This pack implements twelve laws:
 - EEP-DOCS-02
 - EEP-DEVX-01
 
+The how and the why for each law in this stack live in `bindings/<LAW-ID>.md`, one file per law above.
+
 It declines one law: EEP-DOCS-03, with the recorded reason "Corpus scoped law; consumer repositories are not required to index every directory."
 
 ## Blessed toolchain
@@ -61,7 +63,7 @@ It declines one law: EEP-DOCS-03, with the recorded reason "Corpus scoped law; c
 
 ## Standalone use
 
-Copy this folder plus CONSTITUTION.md into any repository and point your agent at STACK.md; the eep CLI is an accelerator, not a requirement. The scaffold stands on its own: with uv and Python 3.11 installed, `make setup` followed by `make test` works in a fresh checkout, and every check in `checks/manifest.yaml` is a plain command you can run by hand.
+Copy this folder plus CONSTITUTION.md into any repository and point your agent at STACK.md; the eep CLI is an accelerator, not a requirement. The fallback is what makes that true: without the CLI, the gate is `make test` plus the five shell checks in `checks/manifest.yaml`, which are plain commands you can run by hand; the seven builtin checks are implemented inside the CLI and run only through `eep verify`. The scaffold's `pyproject.toml` ships with a `{{project_name}}` placeholder, so `make setup` and `make test` work once `eep init` has rendered it or you have substituted the token by hand; beyond that, uv and Python 3.11 are the only prerequisites.
 
 ## Related
 

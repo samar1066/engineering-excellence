@@ -47,13 +47,13 @@ Schemas and entities look similar but serve different masters. Schemas are the w
 
 ## The rules of the shape
 
-Five rules keep the shape intact. The verification gate enforces the third mechanically; reviews enforce the rest.
+Five rules keep the shape intact. The verification gate enforces part of the third mechanically; reviews hold the rest.
 
 Keep routes thin. A route parses input into a schema, calls exactly one workflow method, and maps the returned entity into a response schema. If a route needs a conditional about the domain, that logic belongs in a workflow or an entity, not in `app/api/routes/`. The pattern to copy is `app/api/routes/notes.py`.
 
 Let workflows own orchestration. A workflow coordinates entities, repositories, and transactions for one use case, and it is the public face of its module: routes call it, tests construct it directly, and nothing reaches around it to touch a repository. The pattern to copy is `app/domain/workflows/notes_workflow.py`.
 
-Keep the domain pure. Nothing under `app/domain/` imports `app/infrastructure/`, `app/api/`, or FastAPI, and nothing in it performs I/O: no database calls, no network, no file reads. import-linter enforces this direction as a build failure, so a violation never survives `make verify`.
+Keep the domain pure. Nothing under `app/domain/` imports `app/infrastructure/` or `app/api/`: import-linter enforces exactly those two forbidden imports through the contracts in `pyproject.toml`, and a violation fails the build. The rest of the rule is convention held by review, because no tool checks it for you: domain code also stays free of FastAPI imports and performs no I/O (no database calls, no network, no file reads).
 
 Speak entities at the repository boundary. Repository interfaces such as `app/domain/interfaces/note_repository.py` accept and return domain entities, never ORM rows, driver records, or raw dicts. The workflow above the interface must not know or care what storage sits below it.
 
@@ -63,10 +63,10 @@ Validate at the boundary. Every repository implementation that reads raw storage
 
 Work test first, outside in. This is the exact order, using the notes feature as the worked example:
 
-1. Write a failing API test in `tests/api/test_notes_api.py` using the `client` fixture from `tests/conftest.py` (httpx over ASGI, no sockets). Run `make test` and watch it fail.
+1. Write a failing API test in `tests/api/test_notes_api.py` using the `client` fixture from `tests/conftest.py` (httpx over ASGI, no sockets). Run the file alone with the targeted pytest invocation from the Toolchain section and watch it fail.
 2. Add the route and schemas: request and response models in `app/schemas/notes.py`, the endpoint in `app/api/routes/notes.py` calling exactly one workflow method, and the router registered in `create_app` in `app/main.py`.
-3. Write a failing workflow unit test in `tests/unit/test_notes_workflow.py`, constructing the workflow directly with an in memory repository or a mock. No HTTP involved.
-4. Implement the workflow in `app/domain/workflows/notes_workflow.py`: create entities, call the repository through its interface, raise domain exceptions such as `NotFoundError`.
+3. Write a failing workflow unit test in `tests/unit/test_notes_workflow.py`, constructing the workflow directly with an in memory repository or a mock. No HTTP involved; run it alone the same way.
+4. Implement the workflow in `app/domain/workflows/notes_workflow.py`: create entities, call the repository through its interface, and translate failures into domain exceptions (`NotFoundError` for a missing note, `DomainValidationError` when entity construction fails).
 5. Push invariants into the entity: rules that must always hold, like `title_not_blank` in `app/domain/entities/note.py`, live on the entity as validators and are tested in `tests/unit/test_note_entity.py`.
 6. Define or extend the repository interface in `app/domain/interfaces/note_repository.py`: an ABC with async methods that accept and return entities.
 7. Implement the interface in `app/infrastructure/repositories/`, as in `memory_note_repository.py`. A database implementation validates rows into entities at the boundary.
@@ -83,9 +83,9 @@ The blessed tools. Do not substitute alternatives without a waiver.
 | Category | Tool | Command |
 |----------|------|---------|
 | Package manager | uv | `uv sync` |
-| Formatter | ruff format | runs as the ruff-format hook of pre-commit |
-| Linter | ruff | runs as the ruff hook of pre-commit |
-| Type checker | mypy --strict | strict mode is set in `mypy.ini` |
+| Formatter | ruff format | `uv run ruff format .` |
+| Linter | ruff | `uv run ruff check .` |
+| Type checker | mypy --strict | `uv run mypy app` |
 | Layer boundaries | import-linter | `uv run lint-imports` |
 | Unit tests | pytest | `make test` |
 | Integration tests | pytest with testcontainers | joins `make test` when a database enters the project |
@@ -101,10 +101,14 @@ Daily work drives through four commands:
 
 1. `make setup`: installs dependencies with `uv sync` and enables the pre-commit hooks.
 2. `make test`: runs the whole suite with the 85 percent coverage gate.
-3. `make verify`: runs the full verification gate, every check in the table below.
+3. `make verify`: runs the full verification gate through the eep CLI, every check in the table below.
 4. `make run`: starts the development server through uvicorn with reload.
 
-All four work from a fresh checkout; `make setup` is the only prerequisite for the other three. Tool configuration lives at the repository root (`ruff.toml`, `mypy.ini`, `pytest.ini`, `.pre-commit-config.yaml`) and comes from the pack's blessed templates: edit it only with a waiver.
+`make setup` is the only prerequisite for `make test` and `make run`. `make verify` also requires the eep CLI, which is not a scaffold dependency: without the CLI installed, the fallback gate is `make test` plus the five shell checks from the verification table below.
+
+While iterating, run one file with `uv run pytest tests/api/test_notes_api.py -q` or one test with `-k <name>`. The coverage gate applies to `make test`, not to these targeted runs, so a new red test fails for the right reason instead of tripping the coverage threshold.
+
+Tool configuration lives at the repository root (`ruff.toml`, `mypy.ini`, `pytest.ini`, `.pre-commit-config.yaml`) and comes from the pack's blessed templates: edit it only with a waiver.
 
 ## Observability wiring
 
@@ -116,30 +120,34 @@ Log through structlog only, never print. Get a logger from structlog and pass co
 
 ## Errors
 
-Raise domain exceptions defined in `app/core/exceptions.py`. `ApplicationError` is the base; `NotFoundError(resource, key)` is the worked example. Workflows and entities raise them and nothing below the edge catches them.
+Errors travel upward as exceptions and become HTTP only at the edge. The flow has three stages, each visible in the notes feature.
 
-The exception handlers registered in `create_app` in `app/main.py` do the translation at the edge: `NotFoundError` becomes a 404 JSON response, and a Pydantic `ValidationError` escaping the domain becomes a 422. Request schema validation already returns 422 through FastAPI itself.
+Entities enforce invariants with validators that raise `ValueError`, as `title_not_blank` does in `app/domain/entities/note.py`; Pydantic converts that into a `ValidationError` when the entity is constructed.
 
-Never return error dicts, status tuples, or `None` as a failure signal from a workflow. Raise the specific exception and let the handler translate it. A new failure mode means a new exception class in `app/core/exceptions.py` plus a matching handler in `app/main.py`.
+Workflows translate library errors into domain exceptions from `app/core/exceptions.py`, where `ApplicationError` is the base. `NotesWorkflow.create_note` catches the Pydantic `ValidationError` around `Note.create` and raises `DomainValidationError` carrying the underlying reason; `get_note` raises `NotFoundError(resource, key)` when the repository returns `None`.
+
+The handlers registered in `create_app` in `app/main.py` translate domain exceptions to HTTP: `NotFoundError` becomes 404 and `DomainValidationError` becomes 422. Request schema validation returns 422 through FastAPI itself. A raw Pydantic `ValidationError` reaching the edge means a workflow forgot to translate; that is a server bug, and it becomes a 500 on purpose.
+
+Never return error dicts, status tuples, or `None` as a failure signal from a workflow. Raise the specific exception and let the handler translate it. A new failure mode means a new exception class in `app/core/exceptions.py`, a workflow that raises it, and a matching handler in `app/main.py`.
 
 ## What verify checks here
 
-`make verify` runs every check in `checks/manifest.yaml`. Each is a plain command you can run by hand while iterating:
+`make verify` runs every check in `checks/manifest.yaml`. The five shell checks are plain commands you can run by hand while iterating; the seven builtin checks are implemented inside the eep CLI and run only through `eep verify`:
 
-| Law | Command |
-|-----|---------|
-| EEP-ARCH-01 | `uv run lint-imports` |
-| EEP-TEST-01 | `uv run pytest --collect-only -q` |
-| EEP-TEST-03 | `uv run pytest --cov=app --cov-fail-under=85 -q` |
-| EEP-SEC-01 | `secrets-scan` |
-| EEP-SEC-02 | `uv run ruff check --select S608 .` |
-| EEP-OBS-01 | `file-contains app/core/logging.py configure_logging` |
-| EEP-OBS-02 | `file-contains app/core/otel.py configure_tracing` |
-| EEP-DLV-01 | `file-contains-any .github/workflows 'eep verify'` |
-| EEP-DLV-02 | `uv lock --check` |
-| EEP-DOCS-01 | `docs-frontmatter docs` |
-| EEP-DOCS-02 | `docs-style .` |
-| EEP-DEVX-01 | `file-contains Makefile setup` |
+| Law | Kind | Command |
+|-----|------|---------|
+| EEP-ARCH-01 | shell | `uv run lint-imports` |
+| EEP-TEST-01 | shell | `uv run pytest --collect-only -q` |
+| EEP-TEST-03 | shell | `uv run pytest --cov=app --cov-fail-under=85 -q` |
+| EEP-SEC-01 | builtin | `secrets-scan` |
+| EEP-SEC-02 | shell | `uv run ruff check --select S608 .` |
+| EEP-OBS-01 | builtin | `file-contains app/core/logging.py configure_logging` |
+| EEP-OBS-02 | builtin | `file-contains app/core/otel.py configure_tracing` |
+| EEP-DLV-01 | builtin | `file-contains-any .github/workflows 'eep verify'` |
+| EEP-DLV-02 | shell | `uv lock --check` |
+| EEP-DOCS-01 | builtin | `docs-frontmatter docs` |
+| EEP-DOCS-02 | builtin | `docs-style .` |
+| EEP-DEVX-01 | builtin | `file-contains Makefile setup` |
 
 Two rows deserve a note. EEP-DOCS-01 skips itself when no docs directory exists, so a fresh service passes without ceremony. EEP-DLV-01 looks for the gate inside `.github/workflows`, which the scaffold's `ci.yml` already satisfies.
 
