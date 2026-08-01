@@ -19,14 +19,16 @@ const EXCLUDED_DIRS = [
 ];
 const IGNORE_GLOBS = EXCLUDED_DIRS.map((dir) => `**/${dir}/**`);
 
-// Literal entries are checked directly; entries with a "*" are expanded with fast-glob. Note the
-// asymmetry versus doctrine: only "packs" and "packs/*/*" are required, not "packs/*", matching
-// today's corpus shape where packs/<stack>/ has no README of its own, only the concrete pack
-// folders nested inside it do.
+// Literal entries are checked directly; entries with a "*" are expanded with fast-glob. Every
+// level under packs/ is listed, exactly as under doctrine/: packs/ itself, each kind directory
+// (packs/stack/), and each concrete pack (packs/stack/python-fastapi/) carries a README today, and
+// listing "packs/*" is what makes deleting packs/stack/README.md a reported violation instead of a
+// silent gap.
 const README_REQUIRED_DIRS = [
   "doctrine",
   "doctrine/*",
   "packs",
+  "packs/*",
   "packs/*/*",
   "templates",
   "schemas",

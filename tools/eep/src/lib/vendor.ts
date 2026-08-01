@@ -1,4 +1,13 @@
-import { copyFileSync, cpSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import fg from "fast-glob";
 import { stringify as stringifyYaml } from "yaml";
@@ -11,6 +20,11 @@ import type { Profile } from "./resolve.js";
 const PROGRAM_VERSION = "0.1.0";
 
 const SCAFFOLD_DIR_NAME = "scaffold";
+
+// The single file inside .eep/ the consumer, not the corpus, owns. Read before the tree is torn
+// down and written back afterwards, as raw bytes rather than parsed YAML, so a re-adopt returns
+// the exact document the consumer had (comments, ordering, and trailing whitespace included).
+const WAIVERS_FILE_NAME = "waivers.yaml";
 
 type LockPack = { name: string; version: string };
 
@@ -118,7 +132,10 @@ function copyDoctrineLaws(root: string, eepDir: string, lawIds: Set<string>): vo
  * .eep tree unchanged.
  *
  * Re-vendoring is idempotent: any existing `.eep` directory is removed first, so the result always
- * reflects only the latest call's arguments.
+ * reflects only the latest call's arguments. The one exception is `.eep/waivers.yaml`, which is
+ * carried across the rewrite byte for byte (see WAIVERS_FILE_NAME below): it is the consumer's own
+ * document, not vendored corpus material, and re-adopting to pick up a corpus update must never
+ * silently delete the approved, dated exceptions their gate depends on.
  */
 export function vendorInto(
   targetDir: string,
@@ -130,6 +147,9 @@ export function vendorInto(
   const resolvedPacks = resolvePacks(root, packNames);
 
   const eepDir = join(resolve(targetDir), ".eep");
+  const waiversPath = join(eepDir, WAIVERS_FILE_NAME);
+  const preservedWaivers = existsSync(waiversPath) ? readFileSync(waiversPath) : null;
+
   rmSync(eepDir, { recursive: true, force: true });
   mkdirSync(eepDir, { recursive: true });
 
@@ -155,4 +175,6 @@ export function vendorInto(
     vendored: new Date().toISOString().slice(0, 10),
   };
   writeFileSync(join(eepDir, "lock.yaml"), stringifyYaml(lock));
+
+  if (preservedWaivers !== null) writeFileSync(waiversPath, preservedWaivers);
 }

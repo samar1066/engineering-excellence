@@ -4,10 +4,10 @@ import { createInterface } from "node:readline/promises";
 import type { Command } from "commander";
 import fg from "fast-glob";
 import { stringify as stringifyYaml } from "yaml";
+import { corpusRoot } from "../lib/corpus-root.js";
 import { detectPacks } from "../lib/detect.js";
 import { generateAgentFiles } from "../lib/generate.js";
 import { loadPack } from "../lib/pack.js";
-import { repoRoot } from "../lib/schema.js";
 import { vendorInto } from "../lib/vendor.js";
 
 // Deliberately narrower than resolve.ts's Profile: "steady" is reserved and resolveLaws rejects
@@ -146,7 +146,7 @@ export function register(program: Command): void {
     .action(async (options: AdoptCliOptions) => {
       try {
         const profile = toAdoptProfile(options.profile);
-        const corpusDir = options.corpus ?? repoRoot();
+        const corpusDir = options.corpus ?? corpusRoot();
         const { packs } = await runAdopt({
           targetDir: process.cwd(),
           corpusDir,

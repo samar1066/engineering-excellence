@@ -81,9 +81,15 @@ function asText(value: unknown): string {
   return String(value);
 }
 
+// Keeps the end of a command's output, where the failure reason usually is. The marker is not
+// decoration: without it a truncated detail reads as the command's whole output, and a reader
+// diagnosing a failure from a mid sentence fragment has no way to tell that anything came before.
+const ELISION_MARKER = "... ";
+
 function tail(text: string): string {
   const trimmed = text.trim();
-  return trimmed.length <= MAX_DETAIL_CHARS ? trimmed : trimmed.slice(-MAX_DETAIL_CHARS);
+  if (trimmed.length <= MAX_DETAIL_CHARS) return trimmed;
+  return `${ELISION_MARKER}${trimmed.slice(-MAX_DETAIL_CHARS)}`;
 }
 
 /**

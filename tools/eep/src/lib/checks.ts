@@ -67,9 +67,12 @@ function unquote(value: string): string {
 /**
  * Translates .gitignore lines into fast-glob `ignore` patterns.
  *
- * Deliberately partial: blank lines, comments, and negations (`!pattern`) are skipped, since a
- * negation can only widen the scanned set and skipping it keeps this conservative in the safe
- * direction (scanning more, never less).
+ * Deliberately partial: blank lines, comments, and negations (`!pattern`) are skipped. Skipping a
+ * negation is not the conservative direction it first looks like. A negation exists to carve an
+ * exception out of a broader pattern that is still translated into an ignore glob here, so a file
+ * git actually tracks because of that negation is left out of the scan. This can therefore under
+ * scan negated files, and closing it (by resolving ignores the way git itself does) is tracked for
+ * fan out.
  *
  * Anchoring follows git's own rule: a pattern carrying a slash anywhere other than at its end is
  * anchored to the directory the .gitignore sits in, and a leading slash counts. So `/dist` ignores

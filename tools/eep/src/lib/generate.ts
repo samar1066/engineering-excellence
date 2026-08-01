@@ -13,8 +13,12 @@ const PROFILE_BLOCK_TEXT = {
     "Profile: evolving. New and modified code must comply. Do not refactor untouched code in the same pull request.",
 } as const;
 
+// The authority sentence is part of the footer rather than a section of its own: an agent that
+// reads eep.yaml and edits it expecting the gate to change would be wrong, and the last paragraph
+// of the instructions is where that correction is still being read.
 const VERIFY_FOOTER =
-  "Before declaring work done run `eep verify`. On failure run `eep explain <LAW-ID>`.";
+  "Before declaring work done run `eep verify`. On failure run `eep explain <LAW-ID>`. " +
+  "Configuration authority is .eep/lock.yaml; eep.yaml is a human readable record only.";
 
 function readYamlObject(path: string): Record<string, unknown> {
   const parsed: unknown = parseYaml(readFileSync(path, "utf8"));

@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import fg from "fast-glob";
@@ -76,6 +76,27 @@ describe("vendorInto", () => {
 
     const lawFiles = await lawFilesUnder(target);
     expect(lawFiles).toHaveLength(12);
+  });
+
+  it("carries an existing .eep/waivers.yaml across a re-vendor byte identically", () => {
+    const target = newTargetDir();
+    vendorInto(target, root, ["python-fastapi"], "evolving");
+
+    // Deliberately not canonical YAML: a comment, single quotes, and no trailing newline, so a
+    // parse-and-restring round trip would show up as a difference here even though the document
+    // would still be semantically equal.
+    const waiversPath = join(target, ".eep", "waivers.yaml");
+    const waivers =
+      "# approved 2026-08-01\n- law: EEP-DOCS-02\n  scope: '**/*.md'\n" +
+      '  justification: "The imported vendor note is rewritten next sprint."\n' +
+      "  owner: '@fixture-owner'\n  created: 2026-08-01\n  expires: 2026-11-01";
+    writeFileSync(waiversPath, waivers);
+    const before = readFileSync(waiversPath);
+
+    vendorInto(target, root, ["python-fastapi"], "greenfield");
+
+    expect(existsSync(waiversPath)).toBe(true);
+    expect(readFileSync(waiversPath)).toEqual(before);
   });
 
   it("throws for a pack name that does not exist in the corpus", () => {

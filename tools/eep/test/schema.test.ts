@@ -2,12 +2,18 @@ import { describe, expect, it } from "vitest";
 import { validateAgainst } from "../src/lib/schema.js";
 
 const goodLaw = {
-  id: "EEP-TEST-03", domain: "TEST",
+  id: "EEP-TEST-03",
+  domain: "TEST",
   title: "Every public behavior has a test that fails when the behavior breaks",
-  version: "1.0.0", status: "stable", maturity: "standard", severity: "blocking",
+  version: "1.0.0",
+  status: "stable",
+  maturity: "standard",
+  severity: "blocking",
   applies_to: ["all"],
   authors: [{ name: "Samar Swami", github: "@samar1066" }],
-  maintainers: ["@samar1066"], created: "2026-08-01", updated: "2026-08-01"
+  maintainers: ["@samar1066"],
+  created: "2026-08-01",
+  updated: "2026-08-01",
 };
 
 describe("validateAgainst", () => {

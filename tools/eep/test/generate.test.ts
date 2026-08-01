@@ -81,6 +81,10 @@ describe("generateAgentFiles", () => {
     expect(content).toContain(
       "Before declaring work done run `eep verify`. On failure run `eep explain <LAW-ID>`.",
     );
+    // The generated file must not let a reader believe eep.yaml is what the gate reads.
+    expect(content).toContain(
+      "Configuration authority is .eep/lock.yaml; eep.yaml is a human readable record only.",
+    );
     expect(content.includes(EM_DASH)).toBe(false);
     expect(content.includes(EN_DASH)).toBe(false);
 

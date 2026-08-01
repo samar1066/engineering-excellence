@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 import type { Command } from "commander";
 import { execa } from "execa";
 import fg from "fast-glob";
-import { repoRoot } from "../lib/schema.js";
+import { corpusRoot } from "../lib/corpus-root.js";
 import { runAdopt } from "./adopt.js";
 
 export type InitOptions = {
@@ -165,7 +165,7 @@ export function register(program: Command): void {
         await runInit({
           name,
           targetDir: options.dir,
-          corpusDir: repoRoot(),
+          corpusDir: corpusRoot(),
           pack: options.pack,
         });
       } catch (error) {

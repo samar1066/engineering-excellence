@@ -7,4 +7,13 @@ Status: foundations under construction. The first stable release ships the
 Constitution, the doctrine corpus, the python-fastapi, typescript-node, and
 react packs, and the eep CLI.
 
+In an adopting repository, configuration authority is `.eep/lock.yaml`; `eep.yaml` is a human readable record only.
+
+## Quickstart
+
+1. Clone this repository and change into it.
+2. Run `cd tools/eep`, then `npm ci`.
+3. Run `npx tsx src/index.ts init myproject --dir ..` to scaffold a new, compliant project.
+4. Run `cd ../myproject`, then `make setup` and `make verify`.
+
 License: Apache-2.0. Authored and maintained by @samar1066.

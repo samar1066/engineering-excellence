@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -137,6 +137,7 @@ function buildFixtureCorpus(): string {
     `# Notes\n\nThis line is fine.\nThis line has a bad ${EM_DASH} dash in it.\n`,
   );
   writeFixtureFile(root, "packs/README.md", SIMPLE_README);
+  writeFixtureFile(root, "packs/stack/README.md", SIMPLE_README);
   writeFixtureFile(root, "packs/stack/demo-pack/README.md", SIMPLE_README);
   writeFixtureFile(
     root,
@@ -176,7 +177,7 @@ describe("validateCorpus", () => {
     // must not contribute any violation of its own.
     expect(violations.filter((v) => v.path.includes("EEP-TEST-01.md"))).toHaveLength(0);
 
-    // Every content directory created above (doctrine/, doctrine/test/, packs/,
+    // Every content directory created above (doctrine/, doctrine/test/, packs/, packs/stack/,
     // packs/stack/demo-pack/) ships its own README.md, so this must stay empty.
     expect(violations.filter((v) => v.rule === "missing-readme")).toHaveLength(0);
 
@@ -186,5 +187,18 @@ describe("validateCorpus", () => {
     expect(violations.filter((v) => v.rule === "law-filename")).toHaveLength(0);
 
     expect(violations).toHaveLength(4);
+  });
+
+  // The kind directory level (packs/stack/) is required as well as packs/ and each concrete pack,
+  // so removing its README is a reported violation rather than a silent gap.
+  it("reports a missing README on a pack kind directory", async () => {
+    const root = buildFixtureCorpus();
+    rmSync(join(root, "packs", "stack", "README.md"));
+
+    const violations = await validateCorpus(root);
+
+    const missing = violations.filter((v) => v.rule === "missing-readme");
+    expect(missing).toHaveLength(1);
+    expect(missing[0]?.path).toBe("packs/stack/README.md");
   });
 });

@@ -226,13 +226,14 @@ describe.skipIf(!hasUv)("the greenfield journey: eep init to a verified project"
         const coverage = find(report.results, "EEP-TEST-03");
         expect(coverage?.status, describeFailures(report.results)).toBe("fail");
         expect(coverage?.severity).toBe("blocking");
-        // TODO: assert this detail names the coverage shortfall once the detail is worth reading.
-        // It is not today. runShellCheck keeps the last 200 characters of the command's combined
-        // output, and the scaffold's OpenTelemetry console exporter writes a traceback at
-        // interpreter shutdown, after pytest has printed its summary and closed the capture file.
-        // So the reported detail for a coverage failure is that traceback, not the
-        // "Required test coverage of 85% not reached. Total coverage: 79.63%" line the developer
-        // needs. Product defect, reported in the task 20 report rather than patched here.
+        // The detail is the developer's diagnosis, so it has to be the coverage shortfall itself.
+        // It once was not: runShellCheck keeps the last 200 characters of the command's combined
+        // output, and the scaffold's OpenTelemetry console exporter used to write a traceback at
+        // interpreter shutdown, after pytest had closed the capture file, which pushed the
+        // shortfall line out of the window entirely. The scaffold now installs no span exporter
+        // under pytest (app/core/otel.py), so these two assertions guard that fix from here.
+        expect(coverage?.detail).not.toContain("Exception while exporting Span");
+        expect(coverage?.detail).toContain("coverage");
 
         const docs = find(report.results, "EEP-DOCS-02");
         expect(docs?.status).toBe("fail");
