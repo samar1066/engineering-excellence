@@ -3,3 +3,4 @@ node_modules/
 
 # Internal working documents: specs, plans, brainstorms. Never published.
 docs/internal/
+.superpowers/
