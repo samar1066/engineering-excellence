@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { Command } from "commander";
 import { register as registerCorpus } from "./commands/corpus.js";
+import { register as registerPack } from "./commands/pack.js";
 import { VERSION } from "./version.js";
 
 export function buildProgram(): Command {
@@ -12,4 +13,5 @@ export function buildProgram(): Command {
 const program = buildProgram();
 // command modules register themselves here in later tasks
 registerCorpus(program);
+registerPack(program);
 program.parseAsync(process.argv);
