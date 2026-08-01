@@ -1,0 +1,141 @@
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import type { Command } from "commander";
+import { execa } from "execa";
+import fg from "fast-glob";
+import { repoRoot } from "../lib/schema.js";
+import { runAdopt } from "./adopt.js";
+
+export type InitOptions = {
+  name: string;
+  targetDir: string;
+  corpusDir: string;
+  pack?: string;
+};
+
+const NAME_PATTERN = /^[a-z][a-z0-9_]*$/;
+const DEFAULT_PACK = "python-fastapi";
+const PROJECT_NAME_TOKEN = "{{project_name}}";
+
+// Pinned to today's only pack rather than interpolated from the resolved pack name: both the task
+// brief and dispatch fix this exact commit message, independent of which --pack was requested.
+const SCAFFOLD_COMMIT_MESSAGE = "feat: scaffold from eep python-fastapi pack";
+
+// Lets `git commit` succeed on a machine with no global user.name/user.email configured, without
+// reading or touching that machine's git config. execa's extendEnv defaults to true, so this is
+// merged on top of process.env rather than replacing it, keeping PATH and everything else the git
+// binary needs.
+const GIT_IDENTITY_ENV = {
+  GIT_AUTHOR_NAME: "eep",
+  GIT_AUTHOR_EMAIL: "eep@localhost",
+  GIT_COMMITTER_NAME: "eep",
+  GIT_COMMITTER_EMAIL: "eep@localhost",
+};
+
+function validateName(name: string): void {
+  if (!NAME_PATTERN.test(name)) {
+    throw new Error(
+      "eep: project name must match ^[a-z][a-z0-9_]*$ (lowercase, digits, underscores)",
+    );
+  }
+}
+
+// Resolved straight off the corpus directory layout (packs/<kind>/<pack>/scaffold) rather than
+// through a pack.yaml name lookup like lib/vendor.ts's findPackDir: init cares whether there is a
+// scaffold to copy, not whether a pack exists at all, and the brief states the "no scaffold"
+// condition in exactly these directory terms.
+function findScaffoldDir(corpusDir: string, pack: string): string {
+  const matches = fg
+    .sync(`packs/*/${pack}/scaffold`, { cwd: corpusDir, onlyDirectories: true })
+    .sort();
+  const relPath = matches[0];
+  if (relPath === undefined) {
+    throw new Error(`eep: pack ${pack} has no scaffold`);
+  }
+  return join(corpusDir, relPath);
+}
+
+function ensureEmptyProjectDir(projectDir: string): void {
+  if (existsSync(projectDir) && readdirSync(projectDir).length > 0) {
+    throw new Error(`eep: ${projectDir} already exists and is not empty`);
+  }
+  mkdirSync(projectDir, { recursive: true });
+}
+
+// Every scaffold file is UTF-8 text (no binary assets under packs/*/*/scaffold today), so one
+// read-replace-write pass over every file, dotfiles included, covers the whole tree without a
+// separate binary copy path.
+function copyScaffold(scaffoldDir: string, projectDir: string, name: string): void {
+  const relPaths = fg.sync("**/*", { cwd: scaffoldDir, dot: true, onlyFiles: true }).sort();
+  for (const relPath of relPaths) {
+    const destPath = join(projectDir, relPath);
+    mkdirSync(dirname(destPath), { recursive: true });
+    const content = readFileSync(join(scaffoldDir, relPath), "utf8");
+    writeFileSync(destPath, content.replaceAll(PROJECT_NAME_TOKEN, name));
+  }
+}
+
+// The one sanctioned git use in runInit: initializing and committing the project directory it
+// just created. Never runs against the eep corpus checkout itself.
+async function gitInitAndCommit(projectDir: string): Promise<void> {
+  const env = GIT_IDENTITY_ENV;
+  await execa("git", ["init"], { cwd: projectDir, env });
+  await execa("git", ["add", "-A"], { cwd: projectDir, env });
+  await execa("git", ["commit", "-m", SCAFFOLD_COMMIT_MESSAGE], { cwd: projectDir, env });
+}
+
+function printNextSteps(name: string): void {
+  console.log(`eep init: next steps:\n  cd ${name} && make setup && make verify`);
+}
+
+/**
+ * Greenfield scaffold to compliant repo in one command: validate the project name, copy the
+ * requested pack's scaffold with {{project_name}} substituted throughout, commit it as a fresh
+ * git repository, then adopt it (greenfield profile, no prompt) so .eep/, AGENTS.md, CLAUDE.md,
+ * and the pre-commit gate all exist from the first commit onward.
+ */
+export async function runInit(opts: InitOptions): Promise<void> {
+  validateName(opts.name);
+
+  const pack = opts.pack ?? DEFAULT_PACK;
+  const scaffoldDir = findScaffoldDir(opts.corpusDir, pack);
+
+  const projectDir = join(opts.targetDir, opts.name);
+  ensureEmptyProjectDir(projectDir);
+
+  copyScaffold(scaffoldDir, projectDir, opts.name);
+  await gitInitAndCommit(projectDir);
+
+  await runAdopt({
+    targetDir: projectDir,
+    corpusDir: opts.corpusDir,
+    profile: "greenfield",
+    yes: true,
+  });
+
+  printNextSteps(opts.name);
+}
+
+type InitCliOptions = { pack: string; dir: string };
+
+export function register(program: Command): void {
+  program
+    .command("init")
+    .description("scaffold a new, EEP compliant project from a corpus pack")
+    .argument("<name>", "project name: lowercase letters, digits, underscores")
+    .option("--pack <pack>", "which corpus pack to scaffold from", DEFAULT_PACK)
+    .option("--dir <target>", "directory to create the project under", process.cwd())
+    .action(async (name: string, options: InitCliOptions) => {
+      try {
+        await runInit({
+          name,
+          targetDir: options.dir,
+          corpusDir: repoRoot(),
+          pack: options.pack,
+        });
+      } catch (error) {
+        console.error(error instanceof Error ? error.message : String(error));
+        process.exitCode = 1;
+      }
+    });
+}
