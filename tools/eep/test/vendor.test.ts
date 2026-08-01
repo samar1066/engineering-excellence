@@ -60,11 +60,15 @@ describe("vendorInto", () => {
     expect(lawFiles.some((file) => file.endsWith("EEP-DOCS-03.md"))).toBe(false);
   });
 
-  it("is idempotent: re-vendoring does not error and leaves a consistent tree", async () => {
+  it("is idempotent: re-vendoring with a different profile leaves a consistent tree, not a stale one", async () => {
     const target = newTargetDir();
     vendorInto(target, root, ["python-fastapi"], "evolving");
 
-    expect(() => vendorInto(target, root, ["python-fastapi"], "evolving")).not.toThrow();
+    expect(() => vendorInto(target, root, ["python-fastapi"], "greenfield")).not.toThrow();
+
+    const lock = parseYaml(readFileSync(join(target, ".eep", "lock.yaml"), "utf8")) as ParsedLock;
+    expect(lock.profile).toBe("greenfield");
+    expect(lock.packs).toHaveLength(1);
 
     const packDir = join(target, ".eep", "packs", "stack", "python-fastapi");
     expect(existsSync(join(packDir, "STACK.md"))).toBe(true);

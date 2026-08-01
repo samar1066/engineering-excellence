@@ -1,15 +1,9 @@
-import {
-  copyFileSync,
-  cpSync,
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
-import { join, relative, resolve } from "node:path";
+import { copyFileSync, cpSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join, relative, resolve } from "node:path";
+import fg from "fast-glob";
 import { stringify as stringifyYaml } from "yaml";
 import { loadPack } from "./pack.js";
+import type { Profile } from "./resolve.js";
 
 // The lock file's own format version. Deliberately not sourced from src/version.ts: that constant
 // tracks the eep CLI binary's release version, which can move independently of the lock.yaml shape
@@ -28,7 +22,7 @@ type Lock = {
 };
 
 type ResolvedPack = {
-  packName: string;
+  name: string;
   packDir: string;
   version: string;
   implementsIds: string[];
@@ -39,22 +33,18 @@ function toStringArray(value: unknown): string[] {
   return value.filter((item): item is string => typeof item === "string");
 }
 
-// Packs live at packs/<kind>/<name>/ (kind is "stack", "platform", or "delivery" per
-// pack.schema.json). Callers only supply <name>, so every kind directory is checked for a match;
-// kind names are sorted first so the search order (and therefore which one wins on a hypothetical
-// name collision across kinds) is deterministic.
-function findPackDir(root: string, packName: string): string | undefined {
-  const packsRoot = join(root, "packs");
-  if (!existsSync(packsRoot)) return undefined;
-  const kinds = readdirSync(packsRoot, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => entry.name)
-    .sort();
-  for (const kind of kinds) {
-    const candidate = join(packsRoot, kind, packName);
-    if (existsSync(join(candidate, "pack.yaml"))) return candidate;
+// Pack directories are not addressable by name directly: the corpus's authoritative pack identity
+// is the manifest's own "name" field (pack.schema.json), not the directory basename. Mirrors
+// resolve.ts's findPackDir exactly, including throwing here rather than returning undefined, so
+// the two lookups cannot silently drift apart. Every pack manifest under the corpus is loaded and
+// compared, sorted first, until one with a matching name turns up.
+function findPackDir(root: string, packName: string): string {
+  const manifestPaths = fg.sync("packs/*/*/pack.yaml", { cwd: root }).sort();
+  for (const relPath of manifestPaths) {
+    const dir = dirname(join(root, relPath));
+    if (loadPack(dir).name === packName) return dir;
   }
-  return undefined;
+  throw new Error(`eep: pack ${packName} not found in corpus`);
 }
 
 // Resolves and validates every requested pack before anything is written to targetDir, so an
@@ -62,16 +52,16 @@ function findPackDir(root: string, packName: string): string | undefined {
 function resolvePacks(root: string, packNames: string[]): ResolvedPack[] {
   return packNames.map((packName) => {
     const packDir = findPackDir(root, packName);
-    if (packDir === undefined) {
-      throw new Error(`eep: pack ${packName} not found in corpus`);
-    }
     const pack = loadPack(packDir);
     const version = pack.manifest.version;
     if (typeof version !== "string") {
       throw new Error(`eep: pack ${packName} has no version in its manifest`);
     }
     return {
-      packName,
+      // The manifest's own name, not the requested packName string: today the two always agree
+      // (findPackDir only returns a dir whose manifest name matched), but lock.yaml should record
+      // the corpus's authoritative identity for the pack, not the caller's input spelling of it.
+      name: pack.name,
       packDir,
       version,
       implementsIds: toStringArray(pack.manifest.implements),
@@ -99,29 +89,21 @@ function copyPackExcludingScaffold(packDir: string, destDir: string): void {
   });
 }
 
-// Copies only the doctrine law files whose id is implemented by one of the vendored packs,
-// preserving the <domain>/laws/<id>.md structure. Matching is filename based (law files are named
-// exactly `${id}.md`, enforced by corpus validation's law-filename rule) rather than parsed from
-// each file's frontmatter, so a malformed doctrine file that no vendored pack implements can never
-// cause vendoring to fail.
+// Copies the doctrine law files whose id is implemented by one of the vendored packs, preserving
+// the <domain>/laws/<id>.md structure. Mirrors resolve.ts's findLawFile lookup, including its
+// exact "not found" message, for the identical condition: a vendored tree must never silently
+// omit a law an implements list promised, so a law id with no match anywhere under
+// doctrine/*/laws/ is a hard error, not a skip.
 function copyDoctrineLaws(root: string, eepDir: string, lawIds: Set<string>): void {
-  const doctrineRoot = join(root, "doctrine");
-  if (lawIds.size === 0 || !existsSync(doctrineRoot)) return;
-
-  const domains = readdirSync(doctrineRoot, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => entry.name);
-
-  for (const domain of domains) {
-    const lawsDir = join(doctrineRoot, domain, "laws");
-    if (!existsSync(lawsDir)) continue;
-    for (const lawId of lawIds) {
-      const lawFile = join(lawsDir, `${lawId}.md`);
-      if (!existsSync(lawFile)) continue;
-      const destDir = join(eepDir, "doctrine", domain, "laws");
-      mkdirSync(destDir, { recursive: true });
-      copyFileSync(lawFile, join(destDir, `${lawId}.md`));
+  for (const lawId of lawIds) {
+    const matches = fg.sync(`doctrine/*/laws/${lawId}.md`, { cwd: root }).sort();
+    const relPath = matches[0];
+    if (relPath === undefined) {
+      throw new Error(`eep: law ${lawId} not found in corpus`);
     }
+    const destPath = join(eepDir, relPath);
+    mkdirSync(dirname(destPath), { recursive: true });
+    copyFileSync(join(root, relPath), destPath);
   }
 }
 
@@ -142,7 +124,7 @@ export function vendorInto(
   targetDir: string,
   corpusDir: string,
   packNames: string[],
-  profile: string,
+  profile: Profile,
 ): void {
   const root = resolve(corpusDir);
   const resolvedPacks = resolvePacks(root, packNames);
@@ -161,7 +143,7 @@ export function vendorInto(
     const destDir = join(eepDir, relative(root, resolved.packDir));
     copyPackExcludingScaffold(resolved.packDir, destDir);
     for (const id of resolved.implementsIds) implementsUnion.add(id);
-    lockPacks.push({ name: resolved.packName, version: resolved.version });
+    lockPacks.push({ name: resolved.name, version: resolved.version });
   }
 
   copyDoctrineLaws(root, eepDir, implementsUnion);
