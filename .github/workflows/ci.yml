@@ -10,6 +10,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: npm, cache-dependency-path: tools/eep/package-lock.json }
+      - uses: astral-sh/setup-uv@v3
       - run: npm ci
         working-directory: tools/eep
       - run: npm test
