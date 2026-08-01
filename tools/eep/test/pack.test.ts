@@ -310,6 +310,55 @@ ${FIXTURE_AUTHORS}
   return join(root, "packs/stack/broken-law-pack");
 }
 
+// Valid pack.yaml, but checks/manifest.yaml has an unterminated flow sequence (confirmed above to
+// throw a YAMLParseError, same failure mode as the malformed pack.yaml fixture, just in the other
+// file). Proves this failure degrades to an empty checks list plus one pack-parse-error violation
+// and then keeps running every other assertion, unlike the pack.yaml failure mode, which stops
+// after the one violation because nothing else is left to check.
+function buildPackWithMalformedChecksManifest(): string {
+  const root = newFixtureRoot("eep-pack-malformed-checks-");
+  writeFixtureFile(root, "eep.yaml", "");
+  writeFixtureFile(
+    root,
+    "doctrine/fixture/laws/EEP-CKM-01.md",
+    lawFixture("EEP-CKM-01", "all", "Fixture checks manifest law must stay observable."),
+  );
+  writeFixtureFile(
+    root,
+    "packs/stack/checks-malformed-pack/pack.yaml",
+    `name: checks-malformed-pack
+kind: stack
+version: 1.0.0
+tier: 1
+source: builtin
+detect:
+  - file: pyproject.toml
+requires: []
+implements:
+  - EEP-CKM-01
+declines: []
+toolchain: {}
+${FIXTURE_AUTHORS}
+`,
+  );
+  writeFixtureFile(
+    root,
+    "packs/stack/checks-malformed-pack/checks/manifest.yaml",
+    "checks:\n  - law: [oops\n",
+  );
+  writeFixtureFile(
+    root,
+    "packs/stack/checks-malformed-pack/bindings/EEP-CKM-01.md",
+    bindingFixture("EEP-CKM-01", "This fixture stack explains the law without quoting it."),
+  );
+  writeFixtureFile(
+    root,
+    "packs/stack/checks-malformed-pack/README.md",
+    "# checks-malformed-pack\n",
+  );
+  return join(root, "packs/stack/checks-malformed-pack");
+}
+
 describe("pack contract", () => {
   it("loads the real pack", () => {
     const pack = loadPack(packDir);
@@ -426,6 +475,24 @@ describe("pack contract", () => {
     // up if loadDoctrineLaws kept going past the broken file instead of aborting the whole scan.
     const lawCoverage = violations.find((v) => v.rule === "law-coverage");
     expect(lawCoverage?.detail).toContain("EEP-OK-01");
+
+    expect(violations).toHaveLength(2);
+  });
+
+  it("degrades to an empty checks list and keeps validating after a malformed checks manifest", async () => {
+    const dir = buildPackWithMalformedChecksManifest();
+    const violations = await validatePack(dir);
+
+    const parseError = violations.find((v) => v.rule === "pack-parse-error");
+    expect(parseError?.path).toContain("checks/manifest.yaml");
+    expect(parseError?.line).toBe(1);
+    expect(parseError?.detail.length).toBeGreaterThan(0);
+
+    // Only surfaces if validatePack kept going after the checks manifest failed to parse: with
+    // checks degraded to [], the pack's one implemented law no longer has a checks entry, unlike
+    // the pack.yaml failure mode, which stops after the single parse-error violation.
+    const checksEntryMissing = violations.find((v) => v.rule === "checks-entry-missing");
+    expect(checksEntryMissing?.detail).toContain("EEP-CKM-01");
 
     expect(violations).toHaveLength(2);
   });
