@@ -1,0 +1,50 @@
+checks:
+  - law: EEP-ARCH-01
+    kind: shell
+    command: "uv run lint-imports"
+    proves: "Layer contracts in importlinter.toml hold."
+  - law: EEP-TEST-01
+    kind: shell
+    command: "uv run pytest --collect-only -q"
+    proves: "The suite exists and collects at least one test."
+    fail_if_stdout_matches: "no tests collected"
+  - law: EEP-TEST-03
+    kind: shell
+    command: "uv run pytest --cov=app --cov-fail-under=85 -q"
+    proves: "Public behavior coverage meets the declared minimum."
+  - law: EEP-SEC-01
+    kind: builtin
+    command: "secrets-scan"
+    proves: "No credential material in tracked files."
+  - law: EEP-SEC-02
+    kind: shell
+    command: "uv run ruff check --select S608 ."
+    proves: "No string assembled queries."
+  - law: EEP-OBS-01
+    kind: builtin
+    command: "file-contains app/core/logging.py configure_logging"
+    proves: "Structured logging configuration exists."
+  - law: EEP-OBS-02
+    kind: builtin
+    command: "file-contains app/core/otel.py configure_tracing"
+    proves: "Tracing initialization exists."
+  - law: EEP-DLV-01
+    kind: builtin
+    command: "file-contains-any .github/workflows 'eep verify'"
+    proves: "CI runs the gate."
+  - law: EEP-DLV-02
+    kind: shell
+    command: "uv lock --check"
+    proves: "Lockfile exists and matches pyproject."
+  - law: EEP-DOCS-01
+    kind: builtin
+    command: "docs-frontmatter docs"
+    proves: "Governed docs carry valid frontmatter (skipped when no docs directory exists)."
+  - law: EEP-DOCS-02
+    kind: builtin
+    command: "docs-style ."
+    proves: "No banned dash characters, no zero based ordered lists in markdown."
+  - law: EEP-DEVX-01
+    kind: builtin
+    command: "file-contains Makefile setup"
+    proves: "One command setup entry point exists."

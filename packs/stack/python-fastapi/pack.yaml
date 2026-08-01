@@ -1,0 +1,42 @@
+name: python-fastapi
+kind: stack
+version: 1.0.0
+tier: 1
+source: builtin
+detect:
+  - file: pyproject.toml
+    contains: "fastapi"
+requires: []
+implements:
+  - EEP-ARCH-01
+  - EEP-TEST-01
+  - EEP-TEST-03
+  - EEP-SEC-01
+  - EEP-SEC-02
+  - EEP-OBS-01
+  - EEP-OBS-02
+  - EEP-DLV-01
+  - EEP-DLV-02
+  - EEP-DOCS-01
+  - EEP-DOCS-02
+  - EEP-DEVX-01
+declines:
+  - law: EEP-DOCS-03
+    reason: "Corpus scoped law; consumer repositories are not required to index every directory."
+toolchain:
+  package_manager: { tool: uv, rationale: "Fast resolver with a lockfile by default." }
+  formatter: { tool: "ruff format", config: templates/config/ruff.toml, rationale: "One tool with the linter, zero config drift." }
+  linter: { tool: ruff, config: templates/config/ruff.toml, rationale: "Replaces Black, isort, Flake8, and bandit rules in one pass." }
+  type_checker: { tool: "mypy --strict", config: templates/config/mypy.ini, rationale: "Strict from day one is cheaper than strict later." }
+  boundaries: { tool: import-linter, config: templates/config/importlinter.toml, rationale: "Enforces layer direction as a build failure." }
+  unit_test: { tool: pytest, config: templates/config/pytest.ini, rationale: "Ecosystem standard runner." }
+  integration_test: { tool: "pytest with testcontainers", rationale: "Real dependencies in containers when a database enters the project." }
+  api_test: { tool: "pytest with httpx ASGI transport", rationale: "In process API tests, no socket flakiness." }
+  e2e_test: { tool: "pytest with httpx against a running server", rationale: "Same runner end to end." }
+  coverage: { tool: pytest-cov, rationale: "Feeds the EEP-TEST-03 gate at 85 percent of app code." }
+  mocking: { tool: "unittest.mock and pytest monkeypatch", rationale: "Standard library, no extra dependency." }
+  logging: { tool: structlog, config: templates/config/logging.py, rationale: "Structured JSON with bound correlation ids." }
+  tracing: { tool: "opentelemetry-sdk with FastAPI instrumentation", config: templates/config/otel.py, rationale: "Vendor neutral traces from startup." }
+  hooks: { tool: pre-commit, config: templates/config/pre-commit-config.yaml, rationale: "The gate runs before the commit exists." }
+authors: [{ name: Samar Swami, github: "@samar1066" }]
+maintainers: ["@samar1066"]
