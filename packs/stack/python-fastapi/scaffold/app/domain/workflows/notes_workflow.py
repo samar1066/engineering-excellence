@@ -1,6 +1,8 @@
 import uuid
 
-from app.core.exceptions import NotFoundError
+from pydantic import ValidationError
+
+from app.core.exceptions import DomainValidationError, NotFoundError
 from app.domain.entities.note import Note
 from app.domain.interfaces.note_repository import NoteRepository
 
@@ -10,7 +12,12 @@ class NotesWorkflow:
         self._repository = repository
 
     async def create_note(self, title: str, body: str = "") -> Note:
-        note = Note.create(note_id=uuid.uuid4().hex, title=title, body=body)
+        try:
+            note = Note.create(note_id=uuid.uuid4().hex, title=title, body=body)
+        except ValidationError as exc:
+            detail = exc.errors()[0]
+            reason = detail.get("ctx", {}).get("error", detail["msg"])
+            raise DomainValidationError(str(reason)) from exc
         return await self._repository.add(note)
 
     async def get_note(self, note_id: str) -> Note:

@@ -1,4 +1,5 @@
 """Structured logging setup. Import and call configure_logging() once at startup."""
+
 import logging
 import uuid
 from contextvars import ContextVar

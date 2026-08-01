@@ -1,4 +1,5 @@
 """Tracing setup. Import and call configure_tracing(app) once at startup."""
+
 from fastapi import FastAPI
 from opentelemetry import trace
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor

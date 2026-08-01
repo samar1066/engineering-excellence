@@ -7,3 +7,8 @@ class NotFoundError(ApplicationError):
         super().__init__(f"{resource} {key} not found")
         self.resource = resource
         self.key = key
+
+
+class DomainValidationError(ApplicationError):
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
