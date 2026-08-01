@@ -9,7 +9,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: 20, cache: npm, cache-dependency-path: tools/eep/package-lock.json }
+        with: { node-version: 22, cache: npm, cache-dependency-path: tools/eep/package-lock.json }
       - run: npm ci
         working-directory: tools/eep
       - run: npm test
@@ -21,7 +21,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: 20, cache: npm, cache-dependency-path: tools/eep/package-lock.json }
+        with: { node-version: 22, cache: npm, cache-dependency-path: tools/eep/package-lock.json }
       - run: npm ci
         working-directory: tools/eep
       - run: npx tsx src/index.ts pack validate ../../packs/stack/python-fastapi
