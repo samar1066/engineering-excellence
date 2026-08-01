@@ -1,0 +1,261 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { runBuiltin } from "../src/lib/checks.js";
+
+// Every credential shaped literal in this file is assembled from fragments rather than written
+// out whole, so this test file can never itself trip the very scan it exercises when the corpus
+// runs secrets-scan over its own tree.
+const AWS_KEY = `AKIA${"ABCDEFGHIJKLMNOP"}`;
+const PRIVATE_KEY_HEADER = `-----BEGIN ${"RSA"} PRIVATE KEY-----`;
+const GENERIC_ASSIGNMENT = `secret_key = "${"abcdefghijklmnop1234"}"`;
+
+// Built from an escape, not the literal glyph, so this source file stays free of the banned
+// character even though the assertion below checks that scanning finds one.
+const EM_DASH = "\u2014";
+
+function newDir(): string {
+  return mkdtempSync(join(tmpdir(), "eep-checks-"));
+}
+
+function write(dir: string, relPath: string, contents: string): void {
+  const target = join(dir, relPath);
+  mkdirSync(dirname(target), { recursive: true });
+  writeFileSync(target, contents);
+}
+
+describe("runBuiltin secrets-scan", () => {
+  let tmp: string;
+
+  beforeEach(() => {
+    tmp = newDir();
+  });
+
+  afterEach(() => {
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it("fails on an AWS access key id, naming the file and the pattern family", () => {
+    write(tmp, "app/config.py", `AWS_KEY = "${AWS_KEY}"\n`);
+
+    const result = runBuiltin("secrets-scan", tmp);
+
+    expect(result.ok).toBe(false);
+    expect(result.detail).toContain("app/config.py");
+    expect(result.detail).toContain("aws-access-key-id");
+  });
+
+  it("never echoes the matched secret back in the detail", () => {
+    write(tmp, "app/config.py", `AWS_KEY = "${AWS_KEY}"\n`);
+
+    const result = runBuiltin("secrets-scan", tmp);
+
+    expect(result.detail).not.toContain(AWS_KEY);
+  });
+
+  it("passes a clean tree", () => {
+    write(tmp, "app/config.py", 'AWS_KEY = os.environ["AWS_KEY"]\n');
+    write(tmp, "README.md", "# Clean\n");
+
+    const result = runBuiltin("secrets-scan", tmp);
+
+    expect(result.ok).toBe(true);
+  });
+
+  it("catches private key headers and generic credential assignments", () => {
+    write(tmp, "keys/id_rsa", `${PRIVATE_KEY_HEADER}\nmore\n`);
+    write(tmp, "settings.py", `${GENERIC_ASSIGNMENT}\n`);
+
+    const result = runBuiltin("secrets-scan", tmp);
+
+    expect(result.ok).toBe(false);
+    expect(result.detail).toContain("private-key-header");
+    expect(result.detail).toContain("generic-credential-assignment");
+  });
+
+  it("respects .gitignore: an ignored file carrying a secret does not fail the scan", () => {
+    write(tmp, ".gitignore", "ignored/\nlocal.env\n");
+    write(tmp, "ignored/leaked.py", `AWS_KEY = "${AWS_KEY}"\n`);
+    write(tmp, "local.env", `AWS_KEY=${AWS_KEY}\n`);
+
+    const result = runBuiltin("secrets-scan", tmp);
+
+    expect(result.ok).toBe(true);
+  });
+
+  it("always ignores .git, node_modules, .venv, and .eep/cache", () => {
+    write(tmp, ".git/objects/blob", `AWS_KEY = "${AWS_KEY}"\n`);
+    write(tmp, "node_modules/pkg/index.js", `const k = "${AWS_KEY}";\n`);
+    write(tmp, ".venv/lib/thing.py", `AWS_KEY = "${AWS_KEY}"\n`);
+    write(tmp, ".eep/cache/blob.json", `{"k": "${AWS_KEY}"}\n`);
+
+    const result = runBuiltin("secrets-scan", tmp);
+
+    expect(result.ok).toBe(true);
+  });
+
+  it("skips binary looking files", () => {
+    const binary = Buffer.concat([Buffer.from([0x00, 0x01, 0x02]), Buffer.from(AWS_KEY)]);
+    mkdirSync(join(tmp, "assets"), { recursive: true });
+    writeFileSync(join(tmp, "assets", "blob.bin"), binary);
+
+    const result = runBuiltin("secrets-scan", tmp);
+
+    expect(result.ok).toBe(true);
+  });
+});
+
+describe("runBuiltin file-contains", () => {
+  let tmp: string;
+
+  beforeEach(() => {
+    tmp = newDir();
+  });
+
+  afterEach(() => {
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it("passes when the file exists and contains the needle", () => {
+    write(tmp, "Makefile", ".PHONY: setup\nsetup:\n\tuv sync\n");
+
+    expect(runBuiltin("file-contains Makefile setup", tmp).ok).toBe(true);
+  });
+
+  it("fails naming the missing file", () => {
+    const result = runBuiltin("file-contains Makefile setup", tmp);
+
+    expect(result.ok).toBe(false);
+    expect(result.detail).toContain("Makefile");
+  });
+
+  it("fails naming the missing needle when the file exists", () => {
+    write(tmp, "Makefile", "all:\n\techo hi\n");
+
+    const result = runBuiltin("file-contains Makefile setup", tmp);
+
+    expect(result.ok).toBe(false);
+    expect(result.detail).toContain("setup");
+  });
+
+  it("treats everything after the path token as the needle", () => {
+    write(tmp, "app/core/logging.py", "def configure_logging() -> None:\n    pass\n");
+
+    expect(runBuiltin("file-contains app/core/logging.py def configure_logging", tmp).ok).toBe(
+      true,
+    );
+  });
+});
+
+describe("runBuiltin file-contains-any", () => {
+  let tmp: string;
+
+  beforeEach(() => {
+    tmp = newDir();
+  });
+
+  afterEach(() => {
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it("passes when any file under the directory contains the needle", () => {
+    write(tmp, ".github/workflows/ci.yml", "steps:\n  - run: npx --yes eep verify\n");
+
+    expect(runBuiltin("file-contains-any .github/workflows 'eep verify'", tmp).ok).toBe(true);
+  });
+
+  it("fails when no file under the directory contains the needle", () => {
+    write(tmp, ".github/workflows/ci.yml", "steps:\n  - run: echo hi\n");
+
+    const result = runBuiltin("file-contains-any .github/workflows 'eep verify'", tmp);
+
+    expect(result.ok).toBe(false);
+    expect(result.detail).toContain("eep verify");
+  });
+});
+
+describe("runBuiltin docs-style", () => {
+  let tmp: string;
+
+  beforeEach(() => {
+    tmp = newDir();
+  });
+
+  afterEach(() => {
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it("flags a markdown file carrying a banned dash", () => {
+    write(tmp, "docs/note.md", `# Note\n\nOne thing ${EM_DASH} then another.\n`);
+
+    const result = runBuiltin("docs-style docs", tmp);
+
+    expect(result.ok).toBe(false);
+    expect(result.detail).toContain("note.md");
+    expect(result.detail).toContain("banned-dash");
+    expect(result.detail).toContain(":3");
+  });
+
+  it("passes clean markdown and scans the whole tree when the directory is a dot", () => {
+    write(tmp, "README.md", "# Clean\n\nOne thing, then another.\n");
+    write(tmp, "docs/note.md", "# Note\n\nNothing banned here.\n");
+
+    expect(runBuiltin("docs-style .", tmp).ok).toBe(true);
+  });
+
+  it("never looks inside .eep", () => {
+    write(tmp, ".eep/doctrine/security/laws/EEP-SEC-01.md", `Vendored ${EM_DASH} copy.\n`);
+
+    expect(runBuiltin("docs-style .", tmp).ok).toBe(true);
+  });
+});
+
+describe("runBuiltin docs-frontmatter", () => {
+  let tmp: string;
+
+  beforeEach(() => {
+    tmp = newDir();
+  });
+
+  afterEach(() => {
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it("skips silently when the directory does not exist", () => {
+    const result = runBuiltin("docs-frontmatter docs", tmp);
+
+    expect(result.ok).toBe(true);
+    expect(result.detail).toBe("skipped: no docs directory");
+  });
+
+  it("passes when every document carries title and authors", () => {
+    write(tmp, "docs/note.md", "---\ntitle: A note\nauthors: [{ name: A }]\n---\n\nBody.\n");
+
+    expect(runBuiltin("docs-frontmatter docs", tmp).ok).toBe(true);
+  });
+
+  it("fails naming the document and the missing key", () => {
+    write(tmp, "docs/note.md", "---\ntitle: A note\n---\n\nBody.\n");
+
+    const result = runBuiltin("docs-frontmatter docs", tmp);
+
+    expect(result.ok).toBe(false);
+    expect(result.detail).toContain("note.md");
+    expect(result.detail).toContain("authors");
+  });
+});
+
+describe("runBuiltin unknown", () => {
+  it("reports the unknown builtin name", () => {
+    const tmp = newDir();
+    try {
+      const result = runBuiltin("does-not-exist a b", tmp);
+
+      expect(result.ok).toBe(false);
+      expect(result.detail).toBe("unknown builtin does-not-exist");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
