@@ -301,6 +301,29 @@ describe("runBuiltin docs-style", () => {
     expect(runBuiltin("docs-style .", tmp).ok).toBe(true);
   });
 
+  it("scans a dot directory rather than silently matching nothing", () => {
+    write(tmp, ".github/PULL_REQUEST_TEMPLATE.md", `## Checklist ${EM_DASH} read it.\n`);
+
+    const result = runBuiltin("docs-style .github", tmp);
+
+    expect(result.ok).toBe(false);
+    expect(result.detail).toContain(".github/PULL_REQUEST_TEMPLATE.md");
+    expect(result.detail).toContain("banned-dash");
+  });
+
+  it("treats a scope directory name as a literal path, not a glob", () => {
+    write(tmp, "docs[1]/note.md", `Numbered ${EM_DASH} prose.\n`);
+    write(tmp, "docs(old)/note.md", `Archived ${EM_DASH} prose.\n`);
+
+    const bracketed = runBuiltin("docs-style docs[1]", tmp);
+    expect(bracketed.ok).toBe(false);
+    expect(bracketed.detail).toContain("docs[1]/note.md");
+
+    const parens = runBuiltin("docs-style docs(old)", tmp);
+    expect(parens.ok).toBe(false);
+    expect(parens.detail).toContain("docs(old)/note.md");
+  });
+
   it("honors a root anchored .gitignore pattern from inside a subdirectory scope", () => {
     write(tmp, ".gitignore", "docs/generated/\n");
     write(tmp, "docs/generated/api.md", `Generated ${EM_DASH} output.\n`);
@@ -352,6 +375,16 @@ describe("runBuiltin docs-frontmatter", () => {
     write(tmp, "docs/generated/api.md", "# No frontmatter at all\n");
 
     expect(runBuiltin("docs-frontmatter docs", tmp).ok).toBe(true);
+  });
+
+  it("scans a dot directory rather than silently matching nothing", () => {
+    write(tmp, ".github/ISSUE_TEMPLATE.md", "# No frontmatter at all\n");
+
+    const result = runBuiltin("docs-frontmatter .github", tmp);
+
+    expect(result.ok).toBe(false);
+    expect(result.detail).toContain(".github/ISSUE_TEMPLATE.md");
+    expect(result.detail).toContain("missing title and authors");
   });
 });
 

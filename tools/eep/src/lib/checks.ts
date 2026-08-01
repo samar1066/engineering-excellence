@@ -142,13 +142,23 @@ function listFiles(dir: string, pattern: string, ignore: string[]): string[] {
     .sort();
 }
 
-// fast-glob patterns are always posix separated. "." and "" both mean the whole target tree.
+/**
+ * Folds a scope directory into a fast-glob pattern. Patterns are always posix separated, and a
+ * lone "." (or an empty string) means the whole target tree.
+ *
+ * Two traps this deliberately avoids. First, only a lone "." or a leading "./" is stripped: a
+ * blanket `^\.\/?` would eat the leading dot of a dot directory, turning `.github` into `github`,
+ * which matches nothing and reports a clean pass over zero files. Second, the directory name is
+ * escaped, because it arrives as a literal path (that is what the existence guard checked) and
+ * must not be reinterpreted as glob syntax: a directory called `docs (old)` or `docs[1]` has to
+ * match itself. The suffix is appended after escaping so its own wildcards survive.
+ */
 function scopedPattern(relDir: string, suffix: string): string {
-  const normalized = relDir
-    .replace(/\\/g, "/")
-    .replace(/^\.\/?/, "")
-    .replace(/\/+$/, "");
-  return normalized === "" ? suffix : `${normalized}/${suffix}`;
+  const normalized = relDir.replace(/\\/g, "/");
+  const withoutPrefix = normalized === "." ? "" : normalized.replace(/^\.\//, "");
+  const trimmed = withoutPrefix.replace(/\/+$/, "");
+  if (trimmed === "" || trimmed === ".") return suffix;
+  return `${fg.escapePath(trimmed)}/${suffix}`;
 }
 
 function summarize(findings: string[]): string {
