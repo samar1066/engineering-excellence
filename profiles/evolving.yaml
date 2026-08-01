@@ -1,0 +1,3 @@
+name: evolving
+enforcement: changed
+description: Clean as you code. New and modified code must comply; untouched code is baselined.
