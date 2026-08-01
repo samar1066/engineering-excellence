@@ -16,6 +16,7 @@ export type ResolvedLaw = {
   check: CheckEntry | null;
   declined: string | null;
   changedOnly: boolean;
+  waivable: boolean;
 };
 
 type DeclineEntry = { law: string; reason: string };
@@ -79,6 +80,13 @@ function toRequiredString(id: string, field: string, value: unknown): string {
   throw new Error(`eep: law ${id} is missing ${field}`);
 }
 
+// Laws are waivable unless their frontmatter says otherwise, so the corpus only has to mark the
+// exceptions. Only an explicit `waivable: false` withdraws the waiver path; a missing key, or any
+// other value, leaves the law waivable.
+function toWaivable(value: unknown): boolean {
+  return value !== false;
+}
+
 // Declined entries fall back to the law id as a title when the law file cannot be found at all,
 // since a decline is still reportable even for a law the corpus has not authored yet.
 function readOptionalTitle(lawPath: string | null, fallback: string): string {
@@ -125,6 +133,7 @@ export function resolveLaws(
         check,
         declined: null,
         changedOnly,
+        waivable: toWaivable(data.waivable),
       });
     }
 
@@ -142,6 +151,9 @@ export function resolveLaws(
         check: null,
         declined: entry.reason,
         changedOnly,
+        // A declined law has no check to fail, so nothing can ever be waived against it. The
+        // permissive default is kept rather than reading the law file, so declines stay cheap.
+        waivable: true,
       });
     }
   }

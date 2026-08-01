@@ -11,7 +11,7 @@ import { loadWaivers, type Waiver } from "../lib/waivers.js";
 export type VerifyResult = {
   law: string;
   status: "pass" | "fail" | "waived" | "skipped";
-  severity: string;
+  severity: "blocking" | "warning" | "advisory";
   detail: string;
 };
 
@@ -41,17 +41,31 @@ function readYamlObject(path: string): Record<string, unknown> {
   return parsed as Record<string, unknown>;
 }
 
-// lock.yaml's packs entries are {name, version} objects written by vendor.ts; only the name drives
-// law resolution.
+/**
+ * Reads the pack names out of lock.yaml's `packs` list, which vendor.ts writes as {name, version}
+ * objects.
+ *
+ * Every failure throws rather than being filtered away. A lock file whose entries do not parse
+ * would otherwise resolve to fewer laws, or none, and a gate that quietly checks less than it was
+ * configured to check is worse than one that refuses to run.
+ */
 function toPackNames(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  const names: string[] = [];
-  for (const entry of value) {
-    if (entry === null || typeof entry !== "object") continue;
-    const name = (entry as { name?: unknown }).name;
-    if (typeof name === "string") names.push(name);
+  if (value === undefined || value === null) {
+    throw new Error("eep: .eep/lock.yaml has no packs list; run eep adopt again");
   }
-  return names;
+  if (!Array.isArray(value)) {
+    throw new Error("eep: .eep/lock.yaml packs must be a list; run eep adopt again");
+  }
+  return value.map((entry: unknown, index) => {
+    if (entry === null || typeof entry !== "object") {
+      throw new Error(`eep: .eep/lock.yaml packs[${index}] is not an object; run eep adopt again`);
+    }
+    const name = (entry as { name?: unknown }).name;
+    if (typeof name !== "string" || name === "") {
+      throw new Error(`eep: .eep/lock.yaml packs[${index}] has no name; run eep adopt again`);
+    }
+    return name;
+  });
 }
 
 function toProfile(value: unknown): Profile {
@@ -83,7 +97,10 @@ function tail(text: string): string {
  */
 async function changedScope(targetDir: string): Promise<ChangedScope> {
   try {
-    const result = await execa("git", ["diff", "--name-only", "HEAD"], {
+    // --relative makes git report paths relative to the invocation directory rather than to the
+    // repository root, so a target that is a package inside a monorepo gets paths that resolve
+    // against targetDir the way the builtins expect.
+    const result = await execa("git", ["diff", "--name-only", "--relative", "HEAD"], {
       cwd: targetDir,
       reject: false,
       all: true,
@@ -175,12 +192,19 @@ function waiversByLaw(active: Waiver[]): Map<string, Waiver> {
   return byLaw;
 }
 
+// The original failure detail is kept after the waiver text. A waived result still has to answer
+// "what exactly is being waived here", both for the reviewer approving it and for whoever reads
+// the log the day the waiver expires.
 function applyWaiver(result: VerifyResult, waiver: Waiver): VerifyResult {
-  return {
-    ...result,
-    status: "waived",
-    detail: `waived: ${waiver.justification} (owner ${waiver.owner}, expires ${waiver.expires})`,
-  };
+  const head = `waived: ${waiver.justification} (owner ${waiver.owner}, expires ${waiver.expires})`;
+  return { ...result, status: "waived", detail: `${head}; original: ${result.detail}` };
+}
+
+// A law the corpus marks `waivable: false` cannot be bought out. The failure stands, the reason
+// the waiver was refused is appended so nobody has to guess why their waiver did nothing, and the
+// illegal waiver is separately reported so it gets deleted rather than left to rot in the file.
+function refuseWaiver(result: VerifyResult, lawId: string): VerifyResult {
+  return { ...result, detail: `${result.detail}; waiver refused: ${lawId} is never waivable` };
 }
 
 /**
@@ -201,12 +225,21 @@ export async function runVerify(
 
   const lock = readYamlObject(lockPath);
   const laws = resolveLaws(toPackNames(lock.packs), toProfile(lock.profile), join(dir, ".eep"));
+  // Fail closed. Zero laws means the gate would report a clean pass while proving nothing at all,
+  // which is the one outcome a gate must never produce by accident.
+  if (laws.length === 0) {
+    throw new Error(
+      "eep: resolved zero laws; lock.yaml packs are missing or invalid, run eep adopt again",
+    );
+  }
 
   const scope = opts?.changed === true ? await changedScope(dir) : FULL_SCOPE;
   const { active, problems } = loadWaivers(dir);
   const byLaw = waiversByLaw(active);
 
   const results: VerifyResult[] = [];
+  const refusedWaivers: string[] = [];
+
   for (const law of laws) {
     if (law.declined !== null) {
       results.push({
@@ -219,16 +252,22 @@ export async function runVerify(
     }
     const result = await runCheck(law, dir, scope);
     const waiver = result.status === "fail" ? byLaw.get(law.id) : undefined;
-    results.push(waiver === undefined ? result : applyWaiver(result, waiver));
+    if (waiver === undefined) {
+      results.push(result);
+      continue;
+    }
+    if (!law.waivable) {
+      refusedWaivers.push(
+        `waiver for ${law.id} (owner ${waiver.owner}) is illegal: ${law.id} is never waivable`,
+      );
+      results.push(refuseWaiver(result, law.id));
+      continue;
+    }
+    results.push(applyWaiver(result, waiver));
   }
 
-  for (const problem of problems) {
-    results.push({
-      law: WAIVER_LAW,
-      status: "fail",
-      severity: "blocking",
-      detail: problem.detail,
-    });
+  for (const detail of [...problems.map((problem) => problem.detail), ...refusedWaivers]) {
+    results.push({ law: WAIVER_LAW, status: "fail", severity: "blocking", detail });
   }
 
   const failed = results.filter((result) => result.status === "fail");
@@ -247,11 +286,16 @@ export function register(program: Command): void {
     .description("run every active law check and gate on the blocking failures")
     .option("--changed", "narrow the markdown style sweep to files that differ from HEAD")
     .action(async (opts: { changed?: boolean }) => {
-      const report = await runVerify(process.cwd(), { changed: opts.changed === true });
-      for (const result of report.results) {
-        console.log(`${STATUS_LABEL[result.status]} ${result.law} ${result.detail}`);
+      try {
+        const report = await runVerify(process.cwd(), { changed: opts.changed === true });
+        for (const result of report.results) {
+          console.log(`${STATUS_LABEL[result.status]} ${result.law} ${result.detail}`);
+        }
+        console.log(`verify: ${report.failedBlocking} failed, ${report.warnings} warnings`);
+        if (report.failedBlocking > 0) process.exitCode = 1;
+      } catch (error) {
+        console.error(error instanceof Error ? error.message : String(error));
+        process.exitCode = 1;
       }
-      console.log(`verify: ${report.failedBlocking} failed, ${report.warnings} warnings`);
-      if (report.failedBlocking > 0) process.exitCode = 1;
     });
 }

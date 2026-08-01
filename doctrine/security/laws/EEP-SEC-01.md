@@ -6,6 +6,7 @@ version: 1.0.0
 status: stable
 maturity: foundational
 severity: blocking
+waivable: false
 applies_to: [all]
 authors:
   - { name: Samar Swami, github: "@samar1066" }

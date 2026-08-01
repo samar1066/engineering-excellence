@@ -11,6 +11,12 @@ const AWS_KEY = `AKIA${"ABCDEFGHIJKLMNOP"}`;
 const PRIVATE_KEY_HEADER = `-----BEGIN ${"RSA"} PRIVATE KEY-----`;
 const GENERIC_ASSIGNMENT = `secret_key = "${"abcdefghijklmnop1234"}"`;
 
+// The three shapes the widened generic family exists to catch: a bare keyword with no "key"
+// suffix, a base64 value carrying "=" padding, and a dotted JWT.
+const BARE_PASSWORD = `password = "${"hunter2hunter2hunter2"}"`;
+const BASE64_SECRET = `secret_key = "${"YWJjZGVmZ2hpamtsbW5vcA=="}"`;
+const JWT_TOKEN = `token: "${"eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhYmMxMjMifQ.c2lnbmF0dXJlLXZhbHVl"}"`;
+
 // Built from an escape, not the literal glyph, so this source file stays free of the banned
 // character even though the assertion below checks that scanning finds one.
 const EM_DASH = "\u2014";
@@ -74,6 +80,63 @@ describe("runBuiltin secrets-scan", () => {
     expect(result.detail).toContain("generic-credential-assignment");
   });
 
+  it("catches a bare password assignment with no key suffix", () => {
+    write(tmp, "settings.py", `${BARE_PASSWORD}\n`);
+
+    const result = runBuiltin("secrets-scan", tmp);
+
+    expect(result.ok).toBe(false);
+    expect(result.detail).toContain("generic-credential-assignment");
+    expect(result.detail).not.toContain("hunter2");
+  });
+
+  it("catches a base64 value carrying padding", () => {
+    write(tmp, "settings.py", `${BASE64_SECRET}\n`);
+
+    const result = runBuiltin("secrets-scan", tmp);
+
+    expect(result.ok).toBe(false);
+    expect(result.detail).toContain("generic-credential-assignment");
+    expect(result.detail).not.toContain("YWJjZGVm");
+  });
+
+  it("catches a dotted JWT shaped token", () => {
+    write(tmp, "config.yaml", `${JWT_TOKEN}\n`);
+
+    const result = runBuiltin("secrets-scan", tmp);
+
+    expect(result.ok).toBe(false);
+    expect(result.detail).toContain("config.yaml");
+    expect(result.detail).toContain("generic-credential-assignment");
+    expect(result.detail).not.toContain("eyJhbGciOi");
+  });
+
+  it("catches a value with no closing quote", () => {
+    write(tmp, "settings.py", `access_token = "${"abcdefghijklmnop1234"}\n`);
+
+    expect(runBuiltin("secrets-scan", tmp).ok).toBe(false);
+  });
+
+  it("does not fire on an environment variable lookup", () => {
+    write(tmp, "settings.py", 'password = os.environ["DB_PASSWORD"]\nsecret_key = get_secret()\n');
+
+    expect(runBuiltin("secrets-scan", tmp).ok).toBe(true);
+  });
+
+  it("counts only files it actually read and names the ones it did not", () => {
+    write(tmp, "a.py", "clean = 1\n");
+    write(tmp, "b.py", "clean = 2\n");
+    mkdirSync(join(tmp, "assets"), { recursive: true });
+    writeFileSync(join(tmp, "assets", "blob.bin"), Buffer.from([0x00, 0x01, 0x02, 0x03]));
+
+    const result = runBuiltin("secrets-scan", tmp);
+
+    expect(result.ok).toBe(true);
+    expect(result.detail).toContain("in 2 scanned files");
+    expect(result.detail).toContain("1 not read");
+    expect(result.detail).toContain("assets/blob.bin (binary)");
+  });
+
   it("respects .gitignore: an ignored file carrying a secret does not fail the scan", () => {
     write(tmp, ".gitignore", "ignored/\nlocal.env\n");
     write(tmp, "ignored/leaked.py", `AWS_KEY = "${AWS_KEY}"\n`);
@@ -82,6 +145,27 @@ describe("runBuiltin secrets-scan", () => {
     const result = runBuiltin("secrets-scan", tmp);
 
     expect(result.ok).toBe(true);
+  });
+
+  it("anchors a leading slash pattern to the root, leaving nested directories scanned", () => {
+    write(tmp, ".gitignore", "/dist\n");
+    write(tmp, "dist/bundle.js", `const k = "${AWS_KEY}";\n`);
+
+    expect(runBuiltin("secrets-scan", tmp).ok).toBe(true);
+
+    write(tmp, "packages/app/dist/bundle.js", `const k = "${AWS_KEY}";\n`);
+
+    const result = runBuiltin("secrets-scan", tmp);
+
+    expect(result.ok).toBe(false);
+    expect(result.detail).toContain("packages/app/dist/bundle.js");
+  });
+
+  it("lets an unanchored pattern match at any depth", () => {
+    write(tmp, ".gitignore", "dist/\n");
+    write(tmp, "packages/app/dist/bundle.js", `const k = "${AWS_KEY}";\n`);
+
+    expect(runBuiltin("secrets-scan", tmp).ok).toBe(true);
   });
 
   it("always ignores .git, node_modules, .venv, and .eep/cache", () => {
@@ -209,6 +293,24 @@ describe("runBuiltin docs-style", () => {
 
     expect(runBuiltin("docs-style .", tmp).ok).toBe(true);
   });
+
+  it("honors .gitignore", () => {
+    write(tmp, ".gitignore", "vendor/\n");
+    write(tmp, "vendor/imported.md", `Imported ${EM_DASH} prose.\n`);
+
+    expect(runBuiltin("docs-style .", tmp).ok).toBe(true);
+  });
+
+  it("honors a root anchored .gitignore pattern from inside a subdirectory scope", () => {
+    write(tmp, ".gitignore", "docs/generated/\n");
+    write(tmp, "docs/generated/api.md", `Generated ${EM_DASH} output.\n`);
+    write(tmp, "docs/handwritten.md", "# Clean\n");
+
+    const result = runBuiltin("docs-style docs", tmp);
+
+    expect(result.ok).toBe(true);
+    expect(result.detail).toContain("in 1 markdown files");
+  });
 });
 
 describe("runBuiltin docs-frontmatter", () => {
@@ -243,6 +345,13 @@ describe("runBuiltin docs-frontmatter", () => {
     expect(result.ok).toBe(false);
     expect(result.detail).toContain("note.md");
     expect(result.detail).toContain("authors");
+  });
+
+  it("honors .gitignore", () => {
+    write(tmp, ".gitignore", "docs/generated/\n");
+    write(tmp, "docs/generated/api.md", "# No frontmatter at all\n");
+
+    expect(runBuiltin("docs-frontmatter docs", tmp).ok).toBe(true);
   });
 });
 

@@ -33,6 +33,14 @@ describe("resolveLaws", () => {
     expect(testLaw?.check?.command).toContain("cov-fail-under");
   });
 
+  it("carries the waivable frontmatter flag, defaulting to true when it is absent", () => {
+    const laws = resolveLaws(["python-fastapi"], "greenfield", root);
+
+    expect(laws.find((law) => law.id === "EEP-SEC-01")?.waivable).toBe(false);
+    expect(laws.find((law) => law.id === "EEP-TEST-03")?.waivable).toBe(true);
+    expect(laws.find((law) => law.id === "EEP-DOCS-03")?.waivable).toBe(true);
+  });
+
   it("marks every entry changedOnly under the evolving profile", () => {
     const laws = resolveLaws(["python-fastapi"], "evolving", root);
 
