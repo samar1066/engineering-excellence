@@ -7,3 +7,9 @@ ignore = ["S101"]  # assert is fine in tests
 
 [lint.per-file-ignores]
 "tests/**" = ["S", "T20"]
+
+[lint.flake8-bugbear]
+# FastAPI's dependency injection relies on calling Depends() as an argument
+# default; this is the documented, safe pattern and not the mutable-default
+# bug B008 exists to catch.
+extend-immutable-calls = ["fastapi.Depends"]

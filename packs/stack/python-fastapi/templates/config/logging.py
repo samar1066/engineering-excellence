@@ -4,6 +4,7 @@ import uuid
 from contextvars import ContextVar
 
 import structlog
+from structlog.typing import EventDict, ProcessorReturnValue, WrappedLogger
 
 correlation_id: ContextVar[str] = ContextVar("correlation_id", default="")
 
@@ -14,7 +15,7 @@ def new_correlation_id() -> str:
     return cid
 
 
-def _add_correlation(_, __, event_dict: dict) -> dict:
+def _add_correlation(_: WrappedLogger, __: str, event_dict: EventDict) -> ProcessorReturnValue:
     cid = correlation_id.get()
     if cid:
         event_dict["correlation_id"] = cid
