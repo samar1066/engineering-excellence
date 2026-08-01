@@ -89,8 +89,14 @@ async function gitInitAndCommit(projectDir: string): Promise<void> {
   await execa("git", ["commit", "-m", SCAFFOLD_COMMIT_MESSAGE], { cwd: projectDir, env });
 }
 
+// Two lines, and deliberately not `make verify`: that target shells out to a bare `eep`, which is
+// on PATH only once the CLI ships as a package. `make test` is the part of the gate a fresh
+// project can run today, so the second line names the whole gate and how to reach it meanwhile.
 function printNextSteps(name: string): void {
-  console.log(`eep init: next steps:\n  cd ${name} && make setup && make verify`);
+  console.log(`eep init: next steps: cd ${name} && make setup && make test`);
+  console.log(
+    "eep init: full gate: eep verify (or npx tsx <corpus>/tools/eep/src/index.ts verify) from the project",
+  );
 }
 
 // Failure recovery for everything runInit does once projectDir is guaranteed to exist. Without
