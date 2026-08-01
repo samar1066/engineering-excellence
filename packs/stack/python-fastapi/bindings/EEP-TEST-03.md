@@ -23,5 +23,6 @@ the public surface is the covered surface.
 
 Add the failing test in the same change as the behavior. When coverage drops
 on a diff, the missing test belongs to the code you just wrote.
+
 ---
 *Authored by Samar Swami (@samar1066) · Maintained by @samar1066 · v1.0.0 · Last reviewed 2026-08-01*
