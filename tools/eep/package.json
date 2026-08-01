@@ -1,0 +1,39 @@
+{
+  "name": "eep",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Engineering Excellence Program CLI",
+  "license": "Apache-2.0",
+  "author": "Samar Swami (@samar1066)",
+  "type": "module",
+  "bin": {
+    "eep": "./dist/index.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts --clean",
+    "dev": "tsx src/index.ts",
+    "test": "vitest run",
+    "lint": "biome check src test",
+    "format": "biome format --write src test"
+  },
+  "dependencies": {
+    "ajv": "^8.20.0",
+    "ajv-formats": "^3.0.1",
+    "commander": "^15.0.0",
+    "execa": "^10.0.1",
+    "fast-glob": "^3.3.3",
+    "gray-matter": "^4.0.3",
+    "yaml": "^2.9.0"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.6",
+    "@types/node": "^26.1.2",
+    "tsup": "^8.5.1",
+    "tsx": "^4.23.1",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  }
+}
