@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/samar1066/engineering-excellence/schemas/eep.schema.json",
+  "title": "EEP consumer config (eep.yaml)",
+  "type": "object",
+  "required": ["profile", "packs"],
+  "properties": {
+    "profile": { "enum": ["greenfield", "evolving", "steady"] },
+    "packs": { "type": "array", "items": { "type": "string" } },
+    "precedence": { "type": "array", "items": { "type": "string" } }
+  },
+  "additionalProperties": false
+}

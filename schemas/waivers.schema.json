@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/samar1066/engineering-excellence/schemas/waivers.schema.json",
+  "title": "EEP waivers file (.eep/waivers.yaml)",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "required": ["law", "scope", "justification", "owner", "created", "expires"],
+    "properties": {
+      "law": { "type": "string", "pattern": "^EEP-" },
+      "scope": { "type": "string", "minLength": 1 },
+      "justification": { "type": "string", "minLength": 20 },
+      "owner": { "type": "string", "pattern": "^@" },
+      "approved_by": { "type": "string", "pattern": "^@" },
+      "created": { "type": "string", "format": "date" },
+      "expires": { "type": "string", "format": "date" }
+    },
+    "additionalProperties": false
+  }
+}

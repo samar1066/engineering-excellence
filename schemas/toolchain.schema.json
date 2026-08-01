@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/samar1066/engineering-excellence/schemas/toolchain.schema.json",
+  "title": "EEP pack toolchain",
+  "type": "object",
+  "properties": {
+    "package_manager": { "$ref": "#/$defs/entry" },
+    "formatter": { "$ref": "#/$defs/entry" },
+    "linter": { "$ref": "#/$defs/entry" },
+    "type_checker": { "$ref": "#/$defs/entry" },
+    "boundaries": { "$ref": "#/$defs/entry" },
+    "unit_test": { "$ref": "#/$defs/entry" },
+    "integration_test": { "$ref": "#/$defs/entry" },
+    "api_test": { "$ref": "#/$defs/entry" },
+    "e2e_test": { "$ref": "#/$defs/entry" },
+    "coverage": { "$ref": "#/$defs/entry" },
+    "mocking": { "$ref": "#/$defs/entry" },
+    "logging": { "$ref": "#/$defs/entry" },
+    "tracing": { "$ref": "#/$defs/entry" },
+    "hooks": { "$ref": "#/$defs/entry" },
+    "declined": { "type": "array", "items": {
+      "type": "object", "required": ["category", "reason"],
+      "properties": { "category": { "type": "string" }, "reason": { "type": "string", "minLength": 10 } } } }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "entry": {
+      "type": "object",
+      "required": ["tool", "rationale"],
+      "properties": {
+        "tool": { "type": "string" },
+        "config": { "type": "string", "pattern": "^templates/config/" },
+        "rationale": { "type": "string", "minLength": 10 }
+      },
+      "additionalProperties": false
+    }
+  }
+}
