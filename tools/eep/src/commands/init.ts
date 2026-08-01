@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { Command } from "commander";
 import { execa } from "execa";
@@ -55,11 +55,16 @@ function findScaffoldDir(corpusDir: string, pack: string): string {
   return join(corpusDir, relPath);
 }
 
-function ensureEmptyProjectDir(projectDir: string): void {
-  if (existsSync(projectDir) && readdirSync(projectDir).length > 0) {
+// Returns whether projectDir already existed (necessarily empty, since a non-empty one throws)
+// before this call, so the caller can tell apart a directory runInit itself created from one that
+// was already there, and clean up accordingly if a later step fails.
+function ensureEmptyProjectDir(projectDir: string): boolean {
+  const existedBefore = existsSync(projectDir);
+  if (existedBefore && readdirSync(projectDir).length > 0) {
     throw new Error(`eep: ${projectDir} already exists and is not empty`);
   }
   mkdirSync(projectDir, { recursive: true });
+  return existedBefore;
 }
 
 // Every scaffold file is UTF-8 text (no binary assets under packs/*/*/scaffold today), so one
@@ -88,11 +93,32 @@ function printNextSteps(name: string): void {
   console.log(`eep init: next steps:\n  cd ${name} && make setup && make verify`);
 }
 
+// Failure recovery for everything runInit does once projectDir is guaranteed to exist. Without
+// this, a mid way failure (a bad scaffold file, git refusing to commit, runAdopt finding no pack)
+// would leave a half built, deceptively complete looking directory behind, and a retry would fail
+// immediately on ensureEmptyProjectDir's "already exists and is not empty" guard. Contents are
+// always removed; projectDir itself is only removed when runInit created it (never when the
+// caller already had an empty projectDir waiting before calling runInit). Never touches anything
+// outside projectDir.
+function cleanupProjectDir(projectDir: string, existedBefore: boolean): void {
+  if (existedBefore) {
+    for (const entry of readdirSync(projectDir)) {
+      rmSync(join(projectDir, entry), { recursive: true, force: true });
+    }
+  } else {
+    rmSync(projectDir, { recursive: true, force: true });
+  }
+}
+
 /**
  * Greenfield scaffold to compliant repo in one command: validate the project name, copy the
  * requested pack's scaffold with {{project_name}} substituted throughout, commit it as a fresh
  * git repository, then adopt it (greenfield profile, no prompt) so .eep/, AGENTS.md, CLAUDE.md,
  * and the pre-commit gate all exist from the first commit onward.
+ *
+ * If copying the scaffold, the git steps, or adopt fails, projectDir is cleaned up (see
+ * cleanupProjectDir) and the original error is rethrown with "; cleaned up <projectDir>"
+ * appended to its message, so a retry never has to manually delete a half built directory first.
  */
 export async function runInit(opts: InitOptions): Promise<void> {
   validateName(opts.name);
@@ -101,19 +127,28 @@ export async function runInit(opts: InitOptions): Promise<void> {
   const scaffoldDir = findScaffoldDir(opts.corpusDir, pack);
 
   const projectDir = join(opts.targetDir, opts.name);
-  ensureEmptyProjectDir(projectDir);
+  const projectDirExistedBefore = ensureEmptyProjectDir(projectDir);
 
-  copyScaffold(scaffoldDir, projectDir, opts.name);
-  await gitInitAndCommit(projectDir);
+  try {
+    copyScaffold(scaffoldDir, projectDir, opts.name);
+    await gitInitAndCommit(projectDir);
 
-  await runAdopt({
-    targetDir: projectDir,
-    corpusDir: opts.corpusDir,
-    profile: "greenfield",
-    yes: true,
-  });
+    await runAdopt({
+      targetDir: projectDir,
+      corpusDir: opts.corpusDir,
+      profile: "greenfield",
+      yes: true,
+    });
 
-  printNextSteps(opts.name);
+    printNextSteps(opts.name);
+  } catch (error) {
+    cleanupProjectDir(projectDir, projectDirExistedBefore);
+    if (error instanceof Error) {
+      error.message = `${error.message}; cleaned up ${projectDir}`;
+      throw error;
+    }
+    throw new Error(`${String(error)}; cleaned up ${projectDir}`);
+  }
 }
 
 type InitCliOptions = { pack: string; dir: string };

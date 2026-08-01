@@ -13,6 +13,19 @@ function newTargetDir(prefix: string): string {
   return mkdtempSync(join(tmpdir(), prefix));
 }
 
+// A corpus with a python-fastapi scaffold directory but no pack.yaml anywhere. findScaffoldDir
+// only looks for packs/*/<pack>/scaffold on disk, so it resolves this fine and copyScaffold plus
+// the git commit both succeed; runAdopt's internal detectPacks then finds zero pack manifests to
+// match against the new project, so it throws "no pack detected" only after those earlier steps
+// already wrote to and committed inside projectDir.
+function newScaffoldOnlyCorpusDir(): string {
+  const dir = newTargetDir("eep-init-scaffold-only-corpus-");
+  const scaffoldDir = join(dir, "packs", "stack", "python-fastapi", "scaffold");
+  mkdirSync(scaffoldDir, { recursive: true });
+  writeFileSync(join(scaffoldDir, "README.md"), "# {{project_name}}\n");
+  return dir;
+}
+
 // Every file under dir except inside .git (git's own internals) and .eep (the vendored corpus
 // copy, which is allowed to carry the corpus's own doctrine/pack prose verbatim). The scaffold
 // itself, plus the generated AGENTS.md/CLAUDE.md/eep.yaml at the project root, are what must be
@@ -78,5 +91,17 @@ describe("runInit", () => {
     await expect(
       runInit({ name: "nopack", targetDir, corpusDir, pack: "does-not-exist" }),
     ).rejects.toThrow("has no scaffold");
+  });
+
+  it("cleans up the project dir it created when a later step fails", async () => {
+    const targetDir = newTargetDir("eep-init-cleanup-");
+    const scaffoldOnlyCorpusDir = newScaffoldOnlyCorpusDir();
+    const projectDir = join(targetDir, "willfail");
+
+    await expect(
+      runInit({ name: "willfail", targetDir, corpusDir: scaffoldOnlyCorpusDir }),
+    ).rejects.toThrow("cleaned up");
+
+    expect(existsSync(projectDir)).toBe(false);
   });
 });
