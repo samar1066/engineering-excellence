@@ -1,0 +1,14 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - run: uv sync
+      - run: npx --yes eep verify || uv run pytest --cov=app --cov-fail-under=85 -q
+        # until eep is published to npm, CI falls back to the test gate; eep verify locally
