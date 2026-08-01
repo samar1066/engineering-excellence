@@ -1,0 +1,16 @@
+[tool.importlinter]
+root_package = "app"
+
+[[tool.importlinter.contracts]]
+name = "Layered architecture"
+type = "layers"
+layers = [
+    "app.api",
+    "app.domain",
+]
+# app.infrastructure implements app.domain interfaces and must not be imported by app.domain
+[[tool.importlinter.contracts]]
+name = "Domain never imports infrastructure"
+type = "forbidden"
+source_modules = ["app.domain"]
+forbidden_modules = ["app.infrastructure", "app.api"]

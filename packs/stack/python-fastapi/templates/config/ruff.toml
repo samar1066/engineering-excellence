@@ -1,0 +1,9 @@
+line-length = 100
+target-version = "py311"
+
+[lint]
+select = ["E", "F", "I", "B", "UP", "S", "C4", "T20", "RET", "SIM", "PTH"]
+ignore = ["S101"]  # assert is fine in tests
+
+[lint.per-file-ignores]
+"tests/**" = ["S", "T20"]
