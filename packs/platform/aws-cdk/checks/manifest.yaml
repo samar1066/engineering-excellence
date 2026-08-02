@@ -1,0 +1,9 @@
+checks:
+  - law: EEP-IAC-01
+    kind: shell
+    command: "npm run synth"
+    proves: "Every stage's template renders from a clean checkout with no AWS credentials, and cdk diff sits beside it as the preview entry point."
+  - law: EEP-DLV-04
+    kind: builtin
+    command: "file-contains lib/environments.ts uat"
+    proves: "A non production stage is declared in the stage table, distinct from prod."

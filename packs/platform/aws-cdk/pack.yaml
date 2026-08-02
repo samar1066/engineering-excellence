@@ -1,0 +1,70 @@
+name: aws-cdk
+kind: platform
+version: 1.0.0
+tier: 1
+source: builtin
+detect:
+  - file: infra/cdk.json
+requires: []
+component_dir: infra
+workdir: infra
+implements:
+  - EEP-IAC-01
+  - EEP-DLV-04
+declines:
+  - law: EEP-ARCH-01
+    reason: "Stack scoped law. A CDK app of three files has no application layers to point in one direction; the service components this pack deploys carry their own boundary contracts."
+  - law: EEP-TEST-01
+    reason: "Stack scoped law owned by the service components. This pack proves its definition through the synth check, and still ships template assertions that make test runs."
+  - law: EEP-TEST-03
+    reason: "Stack scoped law. Coverage of public behavior is measured in the service components; a CloudFormation template exposes no runtime behavior to cover."
+  - law: EEP-SEC-01
+    reason: "Stack scoped law owned by the service components. This directory declares no credential material of its own: accounts, secrets, and registry paths bind at deploy time from the environment."
+  - law: EEP-SEC-02
+    reason: "Backend scoped law. No data store query is written here; the service components own every query the infrastructure this pack declares will run."
+  - law: EEP-OBS-01
+    reason: "Backend scoped law about application logs. This pack provisions the log group and the log driver a service writes into; the shape of a log line belongs to the service component."
+  - law: EEP-OBS-02
+    reason: "Backend scoped law. Trace context propagates inside the service components; this pack declares the runtime they propagate in, not the instrumentation."
+  - law: EEP-DLV-01
+    reason: "Delivery scoped law. Workflow definitions belong to the delivery pack, whose continuous integration job runs this pack's synth check along with every other."
+  - law: EEP-DLV-02
+    reason: "Stack scoped law checked per component manifest. This scaffold still ships a committed package-lock.json that make setup restores with npm ci."
+  - law: EEP-DOCS-01
+    reason: "Docs scoped law. This component ships one README rather than a governed docs tree; the component packs carry the frontmatter check for the repository."
+  - law: EEP-DOCS-02
+    reason: "Docs scoped law already checked across the whole repository by the component packs' style scan, which reaches this directory's markdown too."
+  - law: EEP-DOCS-03
+    reason: "Corpus scoped law; consumer repositories are not required to index every directory."
+  - law: EEP-DEVX-01
+    reason: "Stack scoped law about the repository's one command entry point. This scaffold still ships a Makefile whose setup target the composed root Makefile fans out to."
+# TypeScript strict is the language and aws-cdk-lib v2 with constructs is the infrastructure
+# library. The toolchain schema has no language or iac category, so both are documented as rows in
+# README.md and STACK.md rather than invented as keys here.
+toolchain:
+  package_manager: { tool: npm, rationale: "Ships with Node, and npm ci restores the committed lockfile exactly." }
+  formatter: { tool: "biome format", config: templates/config/biome.json, rationale: "One binary formats and lints, so the two can never disagree." }
+  linter: { tool: biome, config: templates/config/biome.json, rationale: "Replaces ESLint and Prettier in a single pass, with no plugin graph to maintain." }
+  type_checker: { tool: "tsc --noEmit", config: templates/config/tsconfig.json, rationale: "A misconfigured construct is a type error before it is a failed deployment." }
+  unit_test: { tool: "vitest with aws-cdk-lib assertions", rationale: "Synthesizes each stage in process and asserts on the rendered template, so a stage's shape is proven with no AWS account involved." }
+  declined:
+    - category: boundaries
+      reason: "Three modules, one direction: bin imports lib and lib imports nothing of its own. A boundary tool would guard a graph small enough to read in full."
+    - category: integration_test
+      reason: "The integration this pack owns is a deployment into a real account, which is what cdk diff previews and the stage sequence rehearses."
+    - category: api_test
+      reason: "This component serves no API of its own; the service it deploys is tested by the pack that builds it."
+    - category: e2e_test
+      reason: "End to end for infrastructure means deploying a stage and calling the service through its load balancer, which belongs to the composed application rather than this scaffold."
+    - category: coverage
+      reason: "A coverage percentage over a construct graph measures nothing useful; the synth check proves the whole definition evaluates and the assertions name the properties that matter."
+    - category: mocking
+      reason: "The CDK assertions module synthesizes the real constructs, so there is nothing left to stand in for."
+    - category: logging
+      reason: "This code runs at synth time, not in production. It provisions the log group the service writes into and logs nothing itself."
+    - category: tracing
+      reason: "Trace context starts in the service components this infrastructure runs; a synth is a local process with no span to propagate."
+    - category: hooks
+      reason: "The scaffold ships no hook manager of its own: eep adopt installs the pre commit gate, and make test is the loop before that."
+authors: [{ name: Samar Swami, github: "@samar1066" }]
+maintainers: ["@samar1066"]
