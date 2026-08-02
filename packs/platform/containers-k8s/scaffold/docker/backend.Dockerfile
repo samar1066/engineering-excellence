@@ -5,7 +5,7 @@
 # runtime that copies that environment plus the application and drops to an unprivileged user.
 
 # --- builder -----------------------------------------------------------------------------------
-FROM python:3.11-slim-bookworm AS builder
+FROM python:3.11-slim-bookworm@sha256:b18992999dbe963a45a8a4da40ac2b1975be1a776d939d098c647482bcad5cba AS builder
 
 # UV_PROJECT_ENVIRONMENT puts the virtual environment at a fixed path the runtime stage can copy
 # wholesale. UV_COMPILE_BYTECODE pays the .pyc cost once here instead of on every container start.
@@ -32,7 +32,7 @@ RUN uv sync --frozen --no-dev --no-install-project
 COPY backend/app ./app
 
 # --- runtime -----------------------------------------------------------------------------------
-FROM python:3.11-slim-bookworm AS runtime
+FROM python:3.11-slim-bookworm@sha256:b18992999dbe963a45a8a4da40ac2b1975be1a776d939d098c647482bcad5cba AS runtime
 
 # curl is the healthcheck client and the only package added to the runtime image.
 RUN apt-get update \

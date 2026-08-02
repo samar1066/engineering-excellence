@@ -1,0 +1,8 @@
+# Keeps the pinned base image digests in docker/ current through reviewed pull
+# requests, which your branch protection and CI gate then judge before merge.
+version: 2
+updates:
+  - package-ecosystem: docker
+    directory: /docker
+    schedule:
+      interval: weekly

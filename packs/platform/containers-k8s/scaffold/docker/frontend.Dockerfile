@@ -6,7 +6,7 @@
 # serves the bundle as static files and proxies the API prefix to the backend.
 
 # --- builder -----------------------------------------------------------------------------------
-FROM node:22-bookworm-slim AS builder
+FROM node:22-bookworm-slim@sha256:f32b81066cde10a75dbac96646099533316d94bac4150c55da1636e1f0ffdc46 AS builder
 
 WORKDIR /src
 
@@ -25,7 +25,7 @@ ENV VITE_API_URL=${VITE_API_URL}
 RUN npm run build
 
 # --- runtime -----------------------------------------------------------------------------------
-FROM nginx:1.27-alpine AS runtime
+FROM nginx:1.27-alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10 AS runtime
 
 # The one address the interface talks to. Substituted into the upstream block at build time and
 # overridden with --build-arg BACKEND_UPSTREAM=host:port for an environment that places the API

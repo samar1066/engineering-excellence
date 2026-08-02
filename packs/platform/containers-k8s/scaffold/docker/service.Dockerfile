@@ -5,7 +5,7 @@
 # development dependencies, and a runtime that copies only what the compiled entry point needs.
 
 # --- builder -----------------------------------------------------------------------------------
-FROM node:22-bookworm-slim AS builder
+FROM node:22-bookworm-slim@sha256:f32b81066cde10a75dbac96646099533316d94bac4150c55da1636e1f0ffdc46 AS builder
 
 WORKDIR /src
 
@@ -25,7 +25,7 @@ RUN npm run build
 RUN npm prune --omit=dev
 
 # --- runtime -----------------------------------------------------------------------------------
-FROM node:22-bookworm-slim AS runtime
+FROM node:22-bookworm-slim@sha256:f32b81066cde10a75dbac96646099533316d94bac4150c55da1636e1f0ffdc46 AS runtime
 
 ENV NODE_ENV=production \
     PORT=3000
