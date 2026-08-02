@@ -1,0 +1,43 @@
+name: typescript-node
+kind: stack
+version: 1.0.0
+tier: 1
+source: builtin
+detect:
+  - file: package.json
+    contains: "fastify"
+requires: []
+component_dir: service
+workdir: service
+implements:
+  - EEP-ARCH-01
+  - EEP-TEST-01
+  - EEP-TEST-03
+  - EEP-SEC-01
+  - EEP-OBS-01
+  - EEP-OBS-02
+  - EEP-DLV-01
+  - EEP-DLV-02
+  - EEP-DOCS-01
+  - EEP-DOCS-02
+  - EEP-DEVX-01
+declines:
+  - law: EEP-SEC-02
+    reason: "No blessed static SQL analyzer in this toolchain revision and the scaffold constructs no queries; a database layer with its analyzer arrives in a later pack revision."
+  - law: EEP-DOCS-03
+    reason: "Corpus scoped law; consumer repositories are not required to index every directory."
+toolchain:
+  package_manager: { tool: npm, rationale: "Ships with Node 22, writes a lockfile by default, and npm ci is the reproducible install." }
+  formatter: { tool: biome, config: templates/config/biome.json, rationale: "One tool with the linter, one config, zero drift." }
+  linter: { tool: biome, config: templates/config/biome.json, rationale: "Replaces ESLint and Prettier in a single pass." }
+  type_checker: { tool: "tsc --noEmit", config: templates/config/tsconfig.json, rationale: "Strict from day one is cheaper than strict later." }
+  boundaries: { tool: dependency-cruiser, config: templates/config/dependency-cruiser.cjs, rationale: "Enforces layer direction as a build failure, type only imports included." }
+  unit_test: { tool: vitest, config: templates/config/vitest.config.ts, rationale: "One runner for every level, native TypeScript, no build step." }
+  api_test: { tool: "vitest with fastify inject", rationale: "In process API tests, no ports and no socket flakiness." }
+  coverage: { tool: "vitest v8 coverage", config: templates/config/vitest.config.ts, rationale: "Feeds the EEP-TEST-03 gate at 85 percent of src, enforced in the config rather than a flag." }
+  mocking: { tool: "vitest built in", rationale: "vi.fn and vi.spyOn ship with the runner, no extra dependency." }
+  logging: { tool: pino, config: templates/config/logging.ts, rationale: "Structured JSON with a correlation id carried through AsyncLocalStorage." }
+  tracing: { tool: "OpenTelemetry node SDK", config: templates/config/otel.ts, rationale: "Vendor neutral traces from startup, fastify entry points instrumented." }
+  hooks: { tool: none, rationale: "eep adopt installs the pre-commit gate, so the pack adds no second hook manager." }
+authors: [{ name: Samar Swami, github: "@samar1066" }]
+maintainers: ["@samar1066"]

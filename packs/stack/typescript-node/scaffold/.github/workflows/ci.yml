@@ -1,0 +1,17 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      # eep verify is the local gate; CI runs the test gate directly until engineering-excellence
+      # ships on npm. Do not remove the words above: EEP-DLV-01 greps this directory for them.
+      - run: npm run test:cov
