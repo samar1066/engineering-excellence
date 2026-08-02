@@ -19,6 +19,10 @@ export type VerifyResult = {
   // alone no longer identifies a result, and a reader looking at a failure has to be told which
   // component's toolchain reported it.
   pack: string;
+  // "skipped" has three sources, and none of them gate: a law the pack declined, a law no active
+  // pack carries a check for, and a check whose subject is not in this repository at all (a docs
+  // builtin pointed at a directory that does not exist). All three are reported as SKIP rather than
+  // PASS, because a row that says PASS is a claim that something was proved.
   status: "pass" | "fail" | "waived" | "skipped";
   severity: "blocking" | "warning" | "advisory";
   detail: string;
@@ -199,6 +203,11 @@ function builtinName(command: string): string {
   return command.trim().split(/\s+/)[0] ?? "";
 }
 
+function builtinStatus(result: BuiltinResult): VerifyResult["status"] {
+  if (result.skipped === true) return "skipped";
+  return result.ok ? "pass" : "fail";
+}
+
 /**
  * Runs one law's check.
  *
@@ -244,9 +253,12 @@ async function runCheck(
       result = runBuiltin(command, targetDir, restrictTo);
     }
 
+    // A builtin that reports skipped had nothing to look at, so it proved nothing. It is neither a
+    // pass (which would put a green row in the gate for a check that never ran) nor a failure, and
+    // it gates like a decline: reported, counted in neither total.
     return {
       ...row,
-      status: result.ok ? "pass" : "fail",
+      status: builtinStatus(result),
       detail: `${result.detail}${note}`,
     };
   }

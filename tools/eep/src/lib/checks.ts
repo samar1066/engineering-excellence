@@ -4,7 +4,16 @@ import fg from "fast-glob";
 import { readFrontmatter } from "./frontmatter.js";
 import { scanMarkdownStyle } from "./markdown.js";
 
-export type BuiltinResult = { ok: boolean; detail: string };
+/**
+ * One builtin's outcome.
+ *
+ * `skipped` is a third answer, not a flavour of `ok`. A builtin that had nothing to look at (no
+ * docs directory to hold documents to) has proved nothing, and reporting it as a pass put a green
+ * row in the gate's output for a check that never ran. Callers that gate on the result read
+ * `skipped` first and map it to their own skipped channel (see commands/verify.ts); `ok` stays true
+ * alongside it so anything that only asks "did this fail" keeps the same answer.
+ */
+export type BuiltinResult = { ok: boolean; detail: string; skipped?: true };
 
 // Directories no builtin ever walks, regardless of what .gitignore says. .git is version control's
 // own storage, node_modules and .venv are third party trees the consumer did not author, and
@@ -302,7 +311,7 @@ function listMarkdown(targetDir: string, relDir: string): string[] {
 function docsStyle(targetDir: string, relDir: string, restrictTo?: string[]): BuiltinResult {
   if (relDir === "") return { ok: false, detail: "docs-style needs a directory" };
   if (!existsSync(join(targetDir, relDir))) {
-    return { ok: true, detail: `skipped: no ${relDir} directory` };
+    return { ok: true, skipped: true, detail: `no ${relDir} directory to check` };
   }
 
   let files = listMarkdown(targetDir, relDir);
@@ -333,7 +342,7 @@ function docsStyle(targetDir: string, relDir: string, restrictTo?: string[]): Bu
 function docsFrontmatter(targetDir: string, relDir: string): BuiltinResult {
   if (relDir === "") return { ok: false, detail: "docs-frontmatter needs a directory" };
   if (!existsSync(join(targetDir, relDir))) {
-    return { ok: true, detail: `skipped: no ${relDir} directory` };
+    return { ok: true, skipped: true, detail: `no ${relDir} directory to check` };
   }
 
   const files = listMarkdown(targetDir, relDir);

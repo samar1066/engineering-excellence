@@ -60,6 +60,28 @@ const INIT_PROFILE: WritableProfile = "greenfield";
 // requested. The composed path names its own set instead (see composedCommitMessage).
 const SCAFFOLD_COMMIT_MESSAGE = "feat: scaffold from eep python-fastapi pack";
 
+/**
+ * The second commit: the governance the scaffold commit could not carry.
+ *
+ * `.eep/`, the agent instructions, `eep.yaml`, and the pre-commit hook are all written after the
+ * scaffold is committed, because vendoring reads the rendered tree to decide what to pin. Left
+ * there, `eep init` finished by handing back a repository whose very first `git status` reported
+ * four untracked paths, and the one thing that made it a governed repository was the part that was
+ * not committed. One more commit, naming exactly those paths, closes it.
+ *
+ * The message is fixed rather than interpolated from the pack set: the scaffold commit already
+ * names which packs built the tree, and this one is about adopting the gate, which is the same act
+ * whatever the tree is made of.
+ */
+const ADOPT_COMMIT_MESSAGE = "chore: adopt engineering excellence gates";
+
+// Exactly what the vendor and generate steps write, by path. Never `git add -A`: a second sweeping
+// commit would also pick up anything the scaffold's own .gitignore does not cover, and a command
+// that commits files the user did not ask it to commit is worse than one that leaves them.
+// .git/hooks/pre-commit is deliberately absent: git does not track its own hooks directory, so the
+// installed hook is a fact about the checkout rather than a file that can be committed.
+const GENERATED_ARTIFACTS = [".eep", "AGENTS.md", "CLAUDE.md", "eep.yaml"];
+
 // Lets `git commit` succeed on a machine with no global user.name/user.email configured, without
 // reading or touching that machine's git config. execa's extendEnv defaults to true, so this is
 // merged on top of process.env rather than replacing it, keeping PATH and everything else the git
@@ -137,6 +159,52 @@ function isWorkflowPath(relPath: string): boolean {
   return relPath === GITHUB_DIR || relPath.startsWith(`${GITHUB_DIR}/`);
 }
 
+// Where a root placed pack keeps one file per component it can containerize, and what it calls
+// them: docker/<component_dir>.Dockerfile. See skipUnselectedComponentFiles.
+const DOCKER_DIR = "docker";
+const DOCKERFILE_SUFFIX = ".Dockerfile";
+
+// Every component directory any pack in this corpus claims, whether or not it was selected. This
+// is the vocabulary that lets a per component file be recognized as one: a Dockerfile named after
+// a directory no pack has ever claimed belongs to the pack that shipped it and is left alone.
+function corpusComponentDirs(corpusDir: string): Set<string> {
+  const dirs = new Set<string>();
+  for (const relPath of fg.sync("packs/*/*/pack.yaml", { cwd: corpusDir }).sort()) {
+    const manifest = loadPack(dirname(join(corpusDir, relPath))).manifest;
+    const componentDir = toOptionalString(manifest.component_dir);
+    if (componentDir !== null) dirs.add(componentDir);
+  }
+  return dirs;
+}
+
+/**
+ * Skips the per component files a root placed scaffold ships for components this project does not
+ * have.
+ *
+ * A root placed pack renders the same scaffold whatever it is composed with, which is right for
+ * everything that describes the repository (the compose file, the ignore file) and wrong for the
+ * files that describe one component each. `docker/service.Dockerfile` copies `service/package.json`
+ * and `service/src` out of the build context; in a project composed without typescript-node there
+ * is no `service/`, so every one of its COPY sources resolves to nothing and the image cannot
+ * build. The file is committed, it is named after a directory that does not exist, and nothing in
+ * the repository records that it was never meant to be there.
+ *
+ * Only files named after a component directory some pack claims and this project did not select are
+ * dropped. The compose file is deliberately left whole: every service in it sits behind a profile,
+ * so a service whose Dockerfile is gone still parses and simply never starts, and rewriting a
+ * pack's own YAML from here would put this program in the business of editing pack content.
+ */
+function skipUnselectedComponentFiles(
+  unselected: ReadonlySet<string>,
+): ((relPath: string) => boolean) | undefined {
+  if (unselected.size === 0) return undefined;
+  return (relPath) => {
+    if (!relPath.startsWith(`${DOCKER_DIR}/`) || !relPath.endsWith(DOCKERFILE_SUFFIX)) return false;
+    const stem = relPath.slice(DOCKER_DIR.length + 1, -DOCKERFILE_SUFFIX.length);
+    return unselected.has(stem);
+  };
+}
+
 // The one sanctioned git use in runInit: initializing and committing the project directory it
 // just created. Never runs against the eep corpus checkout itself.
 async function gitInitAndCommit(projectDir: string, message: string): Promise<void> {
@@ -144,6 +212,42 @@ async function gitInitAndCommit(projectDir: string, message: string): Promise<vo
   await execa("git", ["init"], { cwd: projectDir, env });
   await execa("git", ["add", "-A"], { cwd: projectDir, env });
   await execa("git", ["commit", "-m", message], { cwd: projectDir, env });
+}
+
+/**
+ * Commits the generated artifacts, and only those, into the repository the scaffold commit created.
+ *
+ * `--no-verify` is not a way around the gate. The pre-commit hook this run installed moments ago
+ * would otherwise fire on the commit that installs it, and on a machine with no global install it
+ * resolves the gate through `npx -y engineering-excellence`, so `eep init` would reach the network
+ * to check a tree it just wrote itself. The gate is for the commits that follow this one, every one
+ * of which a developer makes with the hook in place.
+ *
+ * Paths that do not exist are filtered out rather than passed to git, which refuses an unmatched
+ * pathspec outright. All four are written by every successful run today; the filter is what keeps a
+ * future change to that set from turning into a failed init.
+ */
+async function gitCommitGeneratedArtifacts(projectDir: string): Promise<void> {
+  const env = GIT_IDENTITY_ENV;
+  const paths = GENERATED_ARTIFACTS.filter((relPath) => existsSync(join(projectDir, relPath)));
+  if (paths.length === 0) return;
+  await execa("git", ["add", "--", ...paths], { cwd: projectDir, env });
+
+  // git refuses an empty commit, and a project whose generated artifacts happened to match what the
+  // scaffold already committed would otherwise abort here and be rolled back whole. Nothing staged
+  // means there is nothing this commit would have had to say. `git diff --cached --quiet` exits
+  // non zero exactly when something is staged, which is why the result is read rather than thrown.
+  const staged = await execa("git", ["diff", "--cached", "--quiet"], {
+    cwd: projectDir,
+    env,
+    reject: false,
+  });
+  if (staged.exitCode === 0) return;
+
+  await execa("git", ["commit", "--no-verify", "-m", ADOPT_COMMIT_MESSAGE], {
+    cwd: projectDir,
+    env,
+  });
 }
 
 // Two lines: the first is the fastest loop a fresh project can run, the second names the whole
@@ -506,6 +610,16 @@ async function materializeComposed(
   projectDir: string,
   opts: InitOptions,
 ): Promise<void> {
+  const selected = new Set(
+    plan.placements.flatMap((placement) =>
+      placement.componentDir === null ? [] : [placement.componentDir],
+    ),
+  );
+  const unselected = new Set(
+    [...corpusComponentDirs(opts.corpusDir)].filter((dir) => !selected.has(dir)),
+  );
+  const skipUnselected = skipUnselectedComponentFiles(unselected);
+
   const destDirs: string[] = [];
   for (const placement of plan.placements) {
     if (placement.scaffoldDir === null) continue;
@@ -516,7 +630,7 @@ async function materializeComposed(
       placement.scaffoldDir,
       destDir,
       opts.name,
-      isComponent ? isWorkflowPath : undefined,
+      isComponent ? isWorkflowPath : skipUnselected,
     );
     destDirs.push(destDir);
   }
@@ -592,13 +706,18 @@ function cleanupProjectDir(projectDir: string, existedBefore: boolean): void {
  * (greenfield profile, no prompt) so .eep/, AGENTS.md, CLAUDE.md, and the pre-commit gate all
  * exist from the first commit onward.
  *
+ * Either mode ends on two commits: the scaffold, then the governance the vendor step could only
+ * write once the scaffold existed (see gitCommitGeneratedArtifacts). A finished init hands back a
+ * clean working tree, not a governed repository whose governance is untracked.
+ *
  * With tokens: the same outcome for a project made of several components. Each stack pack's
  * scaffold is rendered into its own component directory, platform and delivery scaffolds into
  * theirs or the repository root, and the root gains a README, a Makefile that fans setup and test
  * into the components while running the whole eep gate at the root for verify (see
  * buildRootMakefile), and the union of their ignore entries. The whole tree is one git
- * repository with one initial commit, and one vendor pass at the root puts every selected pack's
- * laws into a single .eep, a single eep.yaml, and one set of agent instructions.
+ * repository, and one vendor pass at the root puts every selected pack's laws into a single .eep,
+ * a single eep.yaml, and one set of agent instructions. A root placed pack's per component files
+ * are filtered to the components this project actually has (see skipUnselectedComponentFiles).
  *
  * Nothing is written until the layout is fully resolved, so an unknown token, a pack with no
  * component directory, or two packs claiming one directory all abort with no project directory
@@ -623,6 +742,11 @@ export async function runInit(opts: InitOptions): Promise<void> {
     } else {
       await materializeComposed(plan, projectDir, opts);
     }
+
+    // Both modes end the same way, so the second commit is made here rather than twice. Inside the
+    // guarded block: a repository left with a scaffold commit and uncommitted governance is exactly
+    // the half built state cleanupProjectDir exists to prevent.
+    await gitCommitGeneratedArtifacts(projectDir);
 
     printNextSteps(opts.name);
   } catch (error) {

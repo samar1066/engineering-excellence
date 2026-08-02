@@ -208,6 +208,67 @@ describe("runSync", () => {
     expect(readLock(targetDir).profile).toBe("evolving");
   });
 
+  /**
+   * Narrowing the token list is the documented way to drop a framework, and it drops the whole
+   * governance: the pack leaves .eep, its laws leave the generated table, and its rows leave the
+   * gate. What it has never touched is the pack's own files. A repository that dropped `cdk` kept
+   * `infra/`, kept the workflow that deploys it, and reported `verify: 0 failed, 0 warnings` about
+   * neither, with nothing anywhere saying a thing had been removed.
+   */
+  it("names every pack a shorter token list drops, and where its files remain", async () => {
+    const targetDir = newTargetDir("eep-sync-narrowing-");
+    await runSync({
+      targetDir,
+      corpusDir,
+      tokens: ["fastapi", "react", "cdk", "github-actions", "docker"],
+      yes: true,
+      installOffer: false,
+    });
+
+    const output = await captureLog(async () => {
+      await runSync({
+        targetDir,
+        corpusDir,
+        tokens: ["fastapi", "react"],
+        yes: true,
+        installOffer: false,
+      });
+    });
+
+    const removals = output.split("\n").filter((line) => line.startsWith("eep: removed pack "));
+    expect(removals).toEqual([
+      "eep: removed pack aws-cdk; its files remain (infra); re-add the token or delete them deliberately",
+      "eep: removed pack containers-k8s; its files remain (root artifacts); re-add the token or delete them deliberately",
+      "eep: removed pack github-actions; its files remain (root artifacts); re-add the token or delete them deliberately",
+    ]);
+    // Informational, and printed under the removals rather than instead of them: the sync still
+    // succeeded, and its closing summary is still the last thing the reader sees.
+    expect(output.indexOf("eep: removed pack aws-cdk")).toBeLessThan(
+      output.indexOf("eep: active set:"),
+    );
+  });
+
+  it("says nothing about removals when the pack set is unchanged or grows", async () => {
+    const targetDir = newTargetDir("eep-sync-no-narrowing-");
+    await runSync({ targetDir, corpusDir, tokens: ["fastapi"], yes: true, installOffer: false });
+
+    const same = await captureLog(async () => {
+      await runSync({ targetDir, corpusDir, tokens: ["fastapi"], yes: true, installOffer: false });
+    });
+    const wider = await captureLog(async () => {
+      await runSync({
+        targetDir,
+        corpusDir,
+        tokens: ["fastapi", "react"],
+        yes: true,
+        installOffer: false,
+      });
+    });
+
+    expect(same).not.toContain("eep: removed pack");
+    expect(wider).not.toContain("eep: removed pack");
+  });
+
   it("preserves the consumer's waivers across a sync", async () => {
     const targetDir = newTargetDir("eep-sync-waivers-");
     await runSync({ targetDir, corpusDir, tokens: ["fastapi"], yes: true });

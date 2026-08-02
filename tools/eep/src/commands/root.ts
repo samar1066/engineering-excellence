@@ -13,6 +13,7 @@ import {
 } from "../lib/frameworks.js";
 import { generateAgentFiles } from "../lib/generate.js";
 import { offerGlobalInstall } from "../lib/install-offer.js";
+import { findPackDir, loadPack } from "../lib/pack.js";
 import { vendorInto } from "../lib/vendor.js";
 import {
   buildEepYamlContent,
@@ -59,6 +60,25 @@ function usageExamples(): string[] {
 }
 
 /**
+ * The lock this directory carries now, or null when there is none or it cannot be read.
+ *
+ * Read before anything is written, because vendorInto rewrites it. Damage is reported as absence
+ * rather than thrown: this very call is about to replace the file, so refusing to run over a
+ * corrupt one would leave the repository stuck with it.
+ */
+function readCurrentLock(targetDir: string): Record<string, unknown> | null {
+  const lockPath = join(targetDir, ".eep", "lock.yaml");
+  if (!existsSync(lockPath)) return null;
+  try {
+    const parsed: unknown = parseYaml(readFileSync(lockPath, "utf8"));
+    if (parsed === null || typeof parsed !== "object") return null;
+    return parsed as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * The profile this sync writes.
  *
  * An explicit --profile always wins. Otherwise an existing .eep/lock.yaml is read and its profile
@@ -67,21 +87,66 @@ function usageExamples(): string[] {
  * the flag was omitted would quietly stop enforcing laws that were passing yesterday.
  *
  * Anything unreadable or unrecognized in the lock (including the reserved "steady", which
- * resolveLaws rejects downstream anyway) falls through to evolving rather than throwing: the lock
- * is about to be rewritten by this very call, so a damaged one is not worth refusing over.
+ * resolveLaws rejects downstream anyway) falls through to evolving rather than throwing.
  */
-function resolveProfile(opts: SyncOptions): WritableProfile {
+function resolveProfile(opts: SyncOptions, lock: Record<string, unknown> | null): WritableProfile {
   if (opts.profile !== undefined) return opts.profile;
-  const lockPath = join(opts.targetDir, ".eep", "lock.yaml");
-  if (!existsSync(lockPath)) return DEFAULT_PROFILE;
+  if (lock === null) return DEFAULT_PROFILE;
+  const profile = lock.profile;
+  if (profile === "greenfield" || profile === "evolving") return profile;
+  return DEFAULT_PROFILE;
+}
+
+// The words that stand in for a component directory when a pack has none: its contribution is
+// repository level (workflows, container definitions), so there is no one directory to point at.
+const ROOT_ARTIFACTS = "root artifacts";
+
+function lockedPackNames(lock: Record<string, unknown> | null): string[] {
+  if (lock === null || !Array.isArray(lock.packs)) return [];
+  const names: string[] = [];
+  for (const entry of lock.packs) {
+    if (entry === null || typeof entry !== "object") continue;
+    const name = (entry as { name?: unknown }).name;
+    if (typeof name === "string" && name !== "") names.push(name);
+  }
+  return names;
+}
+
+// Where a dropped pack's files are, phrased the way the reader will go looking for them. Resolved
+// from the corpus, and falling back to the generic phrasing when the pack is no longer there at
+// all: a pack that has been removed from the corpus since the last sync still left files behind,
+// and saying so imprecisely beats saying nothing.
+function whereFilesRemain(corpusDir: string, packName: string): string {
   try {
-    const parsed: unknown = parseYaml(readFileSync(lockPath, "utf8"));
-    if (parsed === null || typeof parsed !== "object") return DEFAULT_PROFILE;
-    const profile = (parsed as { profile?: unknown }).profile;
-    if (profile === "greenfield" || profile === "evolving") return profile;
-    return DEFAULT_PROFILE;
+    const componentDir = loadPack(findPackDir(corpusDir, packName)).manifest.component_dir;
+    return typeof componentDir === "string" && componentDir !== "" ? componentDir : ROOT_ARTIFACTS;
   } catch {
-    return DEFAULT_PROFILE;
+    return ROOT_ARTIFACTS;
+  }
+}
+
+/**
+ * Names every pack this sync drops, and what it leaves behind.
+ *
+ * Narrowing the token list is the documented way to remove a framework, and it does remove the
+ * governance: the pack leaves .eep, its laws leave the generated table, and its rows leave the
+ * gate. What it has never removed is the pack's own files. A repository that drops `cdk` still has
+ * `infra/`, still has the workflow that deploys it, and now has a green verify that says nothing
+ * about either, which is the one shape a governance tool must never produce quietly.
+ *
+ * Deleting them here was rejected: a component directory is the user's code by the time they run
+ * this, and a sync command that removes application directories is a far worse failure than a sync
+ * that reports what it left. So this is informational and never fatal, and the closing summary
+ * still prints under it.
+ */
+function printRemovals(corpusDir: string, previous: string[], next: string[]): void {
+  const kept = new Set(next);
+  for (const pack of previous) {
+    if (kept.has(pack)) continue;
+    const remains = whereFilesRemain(corpusDir, pack);
+    console.log(
+      `eep: removed pack ${pack}; its files remain (${remains}); re-add the token or delete them deliberately`,
+    );
   }
 }
 
@@ -160,7 +225,9 @@ function rejectUnknownTokens(unknown: string[], corpusDir: string): void {
  *
  * Re-running with a different list is the whole add and remove story: vendorInto rewrites .eep to
  * exactly the requested set (preserving the consumer's waivers), eep.yaml is rewritten to match,
- * and the agent files are regenerated from the new lock. Throws (never exits the process itself)
+ * and the agent files are regenerated from the new lock. A shorter list therefore narrows the gate,
+ * and every pack it drops is named on the way out, together with the files that pack left on disk
+ * (see printRemovals). Throws (never exits the process itself)
  * on an unknown token, an empty available subset, a declined or non interactive confirmation, or
  * anything the vendor and generate steps throw.
  */
@@ -176,7 +243,12 @@ export async function runSync(opts: SyncOptions): Promise<SyncResult> {
     throw new Error("eep: nothing to sync; no requested framework has a pack yet");
   }
 
-  const profile = resolveProfile(opts);
+  // Read before vendorInto rewrites it, so the pack set this directory carried is still knowable
+  // when the removals are reported below.
+  const currentLock = readCurrentLock(opts.targetDir);
+  const previousPacks = lockedPackNames(currentLock);
+
+  const profile = resolveProfile(opts, currentLock);
   printPlan(packs, profile);
   await confirmOrAbort(opts.yes, "sync");
 
@@ -186,6 +258,7 @@ export async function runSync(opts: SyncOptions): Promise<SyncResult> {
 
   installGitHook(opts.targetDir);
 
+  printRemovals(opts.corpusDir, previousPacks, packs);
   printNextSteps(packs, profile);
   // Last, and only ever additive: everything above has already landed, and offerGlobalInstall
   // never throws, so nothing this does can turn a completed sync into a failed command.

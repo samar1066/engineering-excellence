@@ -74,6 +74,33 @@ function newScaffoldOnlyCorpusDir(): string {
   return dir;
 }
 
+function nonEmptyLines(text: string): string[] {
+  return text
+    .trim()
+    .split("\n")
+    .filter((line) => line !== "");
+}
+
+// git log lists the newest commit first, so index 0 is the commit init closes on.
+async function gitSubjects(projectDir: string): Promise<string[]> {
+  const result = await execa("git", ["log", "--format=%s"], { cwd: projectDir });
+  return nonEmptyLines(result.stdout);
+}
+
+// The paths the HEAD commit actually carries. Existence on disk is not the question these answer:
+// the defect was a repository whose governance was written, and then left untracked beside it.
+async function gitHeadFiles(projectDir: string): Promise<string[]> {
+  const result = await execa("git", ["show", "--name-only", "--format=", "HEAD"], {
+    cwd: projectDir,
+  });
+  return nonEmptyLines(result.stdout);
+}
+
+async function gitStatus(projectDir: string): Promise<string> {
+  const result = await execa("git", ["status", "--porcelain"], { cwd: projectDir });
+  return result.stdout.trim();
+}
+
 // Every file under dir except inside .git (git's own internals) and .eep (the vendored corpus
 // copy, which is allowed to carry the corpus's own doctrine/pack prose verbatim). The scaffold
 // itself, plus the generated AGENTS.md/CLAUDE.md/eep.yaml at the project root, are what must be
@@ -139,6 +166,44 @@ describe("runInit", () => {
     await expect(
       runInit({ name: "nopack", targetDir, corpusDir, pack: "does-not-exist" }),
     ).rejects.toThrow("has no scaffold");
+  });
+
+  /**
+   * The governance a scaffold commit cannot carry.
+   *
+   * .eep/, the agent files, and eep.yaml are written after the scaffold is committed, because the
+   * vendor step reads the rendered tree to decide what to pin. Init used to stop there, so the
+   * first `git status` a new project ever ran reported four untracked paths, and the part that made
+   * it a governed repository was the part nobody had committed.
+   */
+  it("commits the scaffold and then the governance, leaving a clean working tree", async () => {
+    const targetDir = newTargetDir("eep-init-commits-");
+
+    await runInit({ name: "twocommits", targetDir, corpusDir, installOffer: false });
+
+    const projectDir = join(targetDir, "twocommits");
+    expect(await gitSubjects(projectDir)).toEqual([
+      "chore: adopt engineering excellence gates",
+      "feat: scaffold from eep python-fastapi pack",
+    ]);
+
+    const committed = await gitHeadFiles(projectDir);
+    expect(committed).toContain(".eep/lock.yaml");
+    expect(committed).toContain("CLAUDE.md");
+    expect(committed).toContain("AGENTS.md");
+    expect(committed).toContain("eep.yaml");
+    // Exactly the generated artifacts: the second commit never sweeps up anything beside them.
+    for (const relPath of committed) {
+      expect(
+        relPath === "eep.yaml" ||
+          relPath === "AGENTS.md" ||
+          relPath === "CLAUDE.md" ||
+          relPath.startsWith(".eep/"),
+        relPath,
+      ).toBe(true);
+    }
+
+    expect(await gitStatus(projectDir)).toBe("");
   });
 
   it("cleans up the project dir it created when a later step fails", async () => {
@@ -513,7 +578,7 @@ describe("runInit composing several packs", () => {
     expect(readFileSync(join(projectDir, "CLAUDE.md"), "utf8")).toEqual(agents);
   });
 
-  it("initializes exactly one git repository, at the root, with one commit", async () => {
+  it("initializes exactly one git repository, at the root, with the scaffold and adopt commits", async () => {
     const targetDir = newTargetDir("eep-init-composed-git-");
     const corpus = newComposedCorpus();
 
@@ -531,8 +596,17 @@ describe("runInit composing several packs", () => {
     expect(existsSync(join(projectDir, "svc", ".git"))).toBe(false);
     expect(existsSync(join(projectDir, ".git", "hooks", "pre-commit"))).toBe(true);
 
-    const log = await execa("git", ["log", "--oneline"], { cwd: projectDir });
-    expect(log.stdout.trim().split("\n")).toHaveLength(1);
+    const subjects = await gitSubjects(projectDir);
+    expect(subjects).toHaveLength(2);
+    expect(subjects[0]).toBe("chore: adopt engineering excellence gates");
+    expect(subjects[1]).toBe(`feat: scaffold from eep packs python-fastapi, ${FIXTURE_STACK_PACK}`);
+
+    const committed = await gitHeadFiles(projectDir);
+    expect(committed).toContain(".eep/lock.yaml");
+    expect(committed).toContain("CLAUDE.md");
+    // The pre-commit hook this run installed lives inside .git, which git never tracks, so the
+    // commit that adopts the gate is deliberately not gated by it.
+    expect(await gitStatus(projectDir)).toBe("");
   });
 
   it("renders a delivery pack that claims no component directory at the repository root", async () => {
@@ -823,6 +897,61 @@ describe("runInit composing several packs", () => {
     ).rejects.toThrow("at least one stack pack");
 
     expect(existsSync(join(targetDir, "shop"))).toBe(false);
+  });
+
+  /**
+   * A root placed pack ships one file per component it can containerize, and it shipped all of them
+   * whatever the project was composed from.
+   *
+   * `docker/service.Dockerfile` copies `service/package.json` and `service/src` out of the build
+   * context. Composed without typescript-node there is no `service/`, so every one of its COPY
+   * sources resolves to nothing and the image cannot build, while the file sits committed in a
+   * repository that has no such component. These run against the real corpus, because the defect is
+   * about the real containers-k8s scaffold and the real component directory vocabulary.
+   */
+  it("omits a root pack's Dockerfile for a component the project does not have", async () => {
+    const targetDir = newTargetDir("eep-init-docker-subset-");
+
+    await runInit({
+      name: "shop",
+      targetDir,
+      corpusDir,
+      tokens: ["fastapi", "react", "docker"],
+      installOffer: false,
+    });
+
+    const projectDir = join(targetDir, "shop");
+    expect(existsSync(join(projectDir, "docker", "backend.Dockerfile"))).toBe(true);
+    expect(existsSync(join(projectDir, "docker", "frontend.Dockerfile"))).toBe(true);
+    expect(existsSync(join(projectDir, "docker", "service.Dockerfile"))).toBe(false);
+    expect(existsSync(join(projectDir, "service"))).toBe(false);
+
+    // Everything the pack ships that is not per component arrives whole. The compose file keeps its
+    // service entry: every service sits behind a profile, so one whose image cannot be built simply
+    // never starts, and rewriting a pack's own YAML from here is not this command's business.
+    expect(existsSync(join(projectDir, "docker", "nginx.conf"))).toBe(true);
+    expect(existsSync(join(projectDir, ".dockerignore"))).toBe(true);
+    const compose = readFileSync(join(projectDir, "docker-compose.dev.yaml"), "utf8");
+    expect(compose).toContain("docker/service.Dockerfile");
+    expect(compose).toContain('profiles: ["all", "service"]');
+  });
+
+  it("keeps every Dockerfile when the project has every component they name", async () => {
+    const targetDir = newTargetDir("eep-init-docker-all-");
+
+    await runInit({
+      name: "shop",
+      targetDir,
+      corpusDir,
+      tokens: ["fastapi", "react", "node", "docker"],
+      installOffer: false,
+    });
+
+    const projectDir = join(targetDir, "shop");
+    for (const name of ["backend.Dockerfile", "frontend.Dockerfile", "service.Dockerfile"]) {
+      expect(existsSync(join(projectDir, "docker", name)), name).toBe(true);
+    }
+    expect(existsSync(join(projectDir, "service", "package.json"))).toBe(true);
   });
 
   it("names the same next steps a single pack init does", async () => {

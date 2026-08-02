@@ -128,7 +128,10 @@ describe.skipIf(!hasUv)("runVerify against an adopted consumer repository", () =
 
       expect(report.failedBlocking, describeFailures(report.results)).toBe(0);
       expect(find(report.results, "EEP-DOCS-03")?.status).toBe("skipped");
-      expect(find(report.results, "EEP-DOCS-01")?.detail).toContain("skipped: no docs directory");
+      // The scaffold ships no docs directory, so the frontmatter law had nothing to judge. That is
+      // a skip: reporting it as a pass claimed a check had run over documents that do not exist.
+      expect(find(report.results, "EEP-DOCS-01")?.status).toBe("skipped");
+      expect(find(report.results, "EEP-DOCS-01")?.detail).toBe("no docs directory to check");
     },
     VERIFY_TIMEOUT,
   );
@@ -321,6 +324,30 @@ describe("runVerify over a builtin only fixture", () => {
     expect(find(report.results, "EEP-DOCS-02")?.status).toBe("pass");
     expect(report.failedBlocking).toBe(0);
     expect(report.warnings).toBe(1);
+  });
+
+  /**
+   * A builtin with nothing to look at is the third answer, not a pass.
+   *
+   * `PASS EEP-DOCS-01 [pack] skipped: no docs directory` was one row saying two things: the label
+   * claimed a check had run and the detail admitted it had not. It sat in the green column of every
+   * composed repository that ships no docs tree. The row now reads SKIP, and, like a decline, it
+   * gates nothing.
+   */
+  it("reports a builtin with nothing to check as SKIP, gating nothing", async () => {
+    const dir = fixtureWith([
+      { id: "EEP-DOCS-01", severity: "blocking", command: "docs-frontmatter docs" },
+      { id: "EEP-DOCS-02", severity: "warning", command: "docs-style absent-docs" },
+    ]);
+
+    const report = await runVerify(dir);
+
+    expect(report.results.filter((result) => result.law === "EEP-DOCS-01").map(formatRow)).toEqual([
+      `SKIP EEP-DOCS-01 [${PACK_NAME}] no docs directory to check`,
+    ]);
+    expect(find(report.results, "EEP-DOCS-02")?.status).toBe("skipped");
+    expect(report.failedBlocking).toBe(0);
+    expect(report.warnings).toBe(0);
   });
 
   it("counts a failing blocking law as a blocking failure", async () => {

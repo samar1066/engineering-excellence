@@ -270,6 +270,13 @@ describe("runBuiltin docs-style", () => {
     rmSync(tmp, { recursive: true, force: true });
   });
 
+  it("reports a skip, not a pass, when the directory does not exist", () => {
+    const result = runBuiltin("docs-style docs", tmp);
+
+    expect(result.skipped).toBe(true);
+    expect(result.detail).toBe("no docs directory to check");
+  });
+
   it("flags a markdown file carrying a banned dash", () => {
     write(tmp, "docs/note.md", `# Note\n\nOne thing ${EM_DASH} then another.\n`);
 
@@ -347,11 +354,13 @@ describe("runBuiltin docs-frontmatter", () => {
     rmSync(tmp, { recursive: true, force: true });
   });
 
-  it("skips silently when the directory does not exist", () => {
+  // A pass is a claim that something was proved. With no docs directory there are no documents to
+  // hold to the frontmatter contract, so the honest answer is the third one.
+  it("reports a skip, not a pass, when the directory does not exist", () => {
     const result = runBuiltin("docs-frontmatter docs", tmp);
 
-    expect(result.ok).toBe(true);
-    expect(result.detail).toBe("skipped: no docs directory");
+    expect(result.skipped).toBe(true);
+    expect(result.detail).toBe("no docs directory to check");
   });
 
   it("passes when every document carries title and authors", () => {
