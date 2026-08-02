@@ -1,0 +1,21 @@
+# Static analysis over the CLI's TypeScript and the workflow definitions.
+name: codeql
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "15 7 * * 2"
+permissions: read-all
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: github/codeql-action/init@a2983b8bed1923f44751c5c43237f479442827b3 # v3
+        with:
+          languages: javascript-typescript, actions
+      - uses: github/codeql-action/analyze@a2983b8bed1923f44751c5c43237f479442827b3 # v3

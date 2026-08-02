@@ -60,9 +60,17 @@ rather than a vulnerability in the program; and a vulnerability in a third party
 tool that a pack blesses, which belongs upstream first, though we do want to
 hear about it so the pack can pin, patch, or move.
 
+## Disclosure timeline
+
+1. Acknowledgment within 7 days of a report arriving through
+   https://github.com/samar1066/engineering-excellence/security/advisories
+2. Assessment and a fix or mitigation plan communicated within 30 days.
+3. Coordinated disclosure within 90 days of the report, or earlier once the
+   fixed version is published, whichever comes first.
+
 ## What to expect
 
-1. Acknowledgment within a week of your report, from a human, confirming we have
+1. Acknowledgment within 7 days of your report, from a human, confirming we have
    it and are looking.
 2. An assessment with our reading of the severity and the blast radius, plus a
    timeline for a fix or a mitigation. The timeline is honest: if something will
