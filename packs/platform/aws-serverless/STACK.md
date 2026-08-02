@@ -25,6 +25,8 @@ Choose serverless when request volume is spiky, low, or unpredictable, when a un
 
 The two are not exclusive. A repository may adopt both: the aws-cdk pack lands in `infra/` and this pack lands in `infra-serverless/`, so a composed project can run its main API on Fargate while event driven or bursty endpoints run on Lambda. Composed init refuses only when two packs claim the same component directory, which these two never do. `eep verify` then runs each pack's checks from its own workdir and reports both.
 
+The two differ in one detail worth stating rather than discovering: this component is native ESM (`"type": "module"`, `module` and `moduleResolution` both `nodenext`, relative imports carrying the `.js` extension), while the aws-cdk sibling ships a `node16` CommonJS style configuration. Both compose in one repository because each component installs its own dependencies and compiles independently, with no shared `tsconfig.json` and no shared `node_modules`. Aligning the two is queued; until then, copy import style from the component you are editing rather than from the other one.
+
 ## Anatomy
 
 ```
@@ -118,6 +120,8 @@ One artifact reaches production, and it is the cloud assembly: the `cdk.out/` di
 1. Synthesize once, in continuous integration, with no AWS credentials in the job. That is deliberate twice over: it is the EEP-IAC-01 check, and a credential free synthesis produces environment agnostic templates, which are the only ones that can be deployed into three different accounts. Upload `cdk.out/` as the build artifact of that commit.
 2. Deploy that same artifact to dev: download `cdk.out/`, assume the dev account role, and run `npx cdk deploy --app cdk.out <app>-dev --require-approval never`. The `--app cdk.out` flag is what makes this a deployment of the artifact rather than a fresh synthesis, so what reaches dev is byte for byte what verification passed.
 3. Deploy the same artifact to uat behind an environment approval, then to prod behind its own approval, changing only the stack name and the role assumed. A stage that is skipped is a stage that never rehearsed.
+
+One honest caveat about who runs those three steps. The github-actions delivery pack this program ships automates the container and Fargate path today: its `deploy.yml` builds an image once and promotes that image tag through dev, uat, and prod. The cloud assembly promotion described above is documented here as the contract a pipeline for this component must implement, and generating that workflow is queued for a later revision of the delivery pack. Until it lands, the three steps are yours to write, and this section is the specification to write them against.
 
 Two supporting rules. When synthesis and deployment happen in one step, which is the local and manual path, always name the stage as context: `npx cdk deploy --all -c stage=uat` builds only that stage's stack, so the command cannot reach an environment nobody asked for. And run `npm run diff` before any deployment to a stage that already exists, attaching its output to the change under review: `cdk diff` reads deployed state and names every resource that would be created, replaced, or destroyed, which is the difference between an approval and a guess.
 

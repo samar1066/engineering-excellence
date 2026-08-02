@@ -20,8 +20,11 @@ instantiations of one template rather than three copies of a definition, so they
 differ in scale and retention and not in shape, which is what makes a change
 proven in uat genuine evidence about prod. The differences are deliberate and
 visible in one file: prod runs on more memory, keeps its logs for six months
-instead of one week, and retains its log group when the stack is deleted, while
-the non production stages destroy theirs. Isolation of credentials comes from
+where dev keeps one week and uat one month, and retains its log group when the
+stack is deleted, while both non production stages destroy theirs. Retention
+climbs with the stage rather than splitting into two settings, because uat is
+the rehearsal for prod and its logs outlive the change that produced them.
+Isolation of credentials comes from
 the same place the account does, which is the deploy, not the file: each stage
 deploys under its own assumed role, so a process running in dev holds no
 credential that resolves to a prod resource. Adding a fourth stage is one entry
