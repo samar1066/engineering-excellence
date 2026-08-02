@@ -1,0 +1,74 @@
+name: containers-k8s
+kind: platform
+version: 1.0.0
+tier: 1
+source: builtin
+detect:
+  - file: docker-compose.dev.yaml
+requires: []
+implements:
+  - EEP-IAC-02
+declines:
+  - law: EEP-ARCH-01
+    reason: "Stack scoped law, gated by the stack packs present. This pack adds no application code and owns no import graph; the layer contract belongs to the pack governing each component it containerizes."
+  - law: EEP-TEST-01
+    reason: "Stack scoped law, gated by the stack packs present. A container definition carries no unit under test; the suite proving a component lives in the pack that scaffolds it."
+  - law: EEP-TEST-03
+    reason: "Stack scoped law, gated by the stack packs present. Coverage is measured over application source, which this pack does not author."
+  - law: EEP-SEC-01
+    reason: "Stack scoped law, gated by the stack packs present. This pack bakes no credential into an image and adds no scanner of its own."
+  - law: EEP-SEC-02
+    reason: "Stack scoped law, gated by the stack packs present. No query is constructed anywhere here; the data layer and its analyzer belong to a backend pack."
+  - law: EEP-OBS-01
+    reason: "Stack scoped law, gated by the stack packs present. Structured logging is configured inside each service process; an image only forwards that stream to stdout."
+  - law: EEP-OBS-02
+    reason: "Stack scoped law, gated by the stack packs present. Trace initialization happens in service startup code; the image passes exporter configuration through as environment."
+  - law: EEP-DLV-01
+    reason: "Delivery scoped law, gated by the delivery pack present. Wiring the gate into automation belongs to the pack that owns .github, which this pack deliberately never writes into."
+  - law: EEP-DLV-02
+    reason: "Stack scoped law, gated by the stack packs present. The lockfile and its freshness check belong to each component's package manager; these images consume those lockfiles rather than producing one."
+  - law: EEP-DOCS-01
+    reason: "Stack scoped law, gated by the stack packs present, which own the docs directory of the composed repository."
+  - law: EEP-DOCS-02
+    reason: "Stack scoped law, gated by the stack packs present. This pack places no markdown into a composed repository."
+  - law: EEP-DEVX-01
+    reason: "Stack scoped law, gated by the stack packs present. The one command entry point is the composed root Makefile plus each component Makefile; this pack writes neither and adds no third entry point."
+  - law: EEP-DOCS-03
+    reason: "Corpus scoped law; consumer repositories are not required to index every directory."
+# The two tools this pack blesses are docker with BuildKit for image builds and docker compose for
+# the local loop. The toolchain schema defines no container_build or local_dev category and forbids
+# additional properties, so both are documented in full in STACK.md and README.md rather than
+# invented as keys here, the same way the react pack documents Vite. Every category the schema does
+# define is declined below, because this pack authors no application source for one to act on.
+toolchain:
+  declined:
+    - category: package_manager
+      reason: "Dependencies are installed by each component's own package manager, uv or npm, from the lockfile the image copies in; docker resolves nothing itself."
+    - category: formatter
+      reason: "No blessed Dockerfile formatter exists in this toolchain revision, and adding one would gate a change on cosmetics rather than on the build succeeding."
+    - category: linter
+      reason: "docker build --check is the linter here: it ships with the builder, understands the instruction set of the version building the image, and needs no extra binary in the repository."
+    - category: type_checker
+      reason: "No type system governs a container definition; the equivalent guarantee is building the image and watching its healthcheck pass."
+    - category: boundaries
+      reason: "This pack contributes no module graph, so there is no import direction to enforce."
+    - category: unit_test
+      reason: "The units under test live in the stack packs this pack containerizes; an image is proven by building it and by the composed system starting."
+    - category: integration_test
+      reason: "Bringing the composed stack up with docker compose is the integration exercise, and it is a documented command rather than a second test runner."
+    - category: api_test
+      reason: "API behavior belongs to the service components; the image contract stops at the healthcheck endpoint answering."
+    - category: e2e_test
+      reason: "End to end coverage of the composed application belongs to the frontend stack pack and its browser tool, not to the pack that builds the images."
+    - category: coverage
+      reason: "Coverage is a property of executed source, and this pack ships none."
+    - category: mocking
+      reason: "Nothing here runs inside a test process, so there is nothing to substitute."
+    - category: logging
+      reason: "The image forwards whatever the process writes to stdout; the log pipeline itself is configured by each stack pack."
+    - category: tracing
+      reason: "Trace context starts inside the service process, so the exporter endpoint arrives as environment rather than as a tool this pack blesses."
+    - category: hooks
+      reason: "eep adopt installs the pre commit gate, so this pack adds no second hook manager."
+authors: [{ name: Samar Swami, github: "@samar1066" }]
+maintainers: ["@samar1066"]

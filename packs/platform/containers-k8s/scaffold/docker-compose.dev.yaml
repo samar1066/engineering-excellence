@@ -1,0 +1,65 @@
+# The composed system, built from the same definitions under docker/ that a release builds from.
+# Every build uses the repository root as its context, so one .dockerignore governs all of them.
+#
+# Bring the whole stack up:      docker compose -f docker-compose.dev.yaml --profile all up --build
+# Bring one component up:        docker compose -f docker-compose.dev.yaml --profile backend up --build
+# Tear it down:                  docker compose -f docker-compose.dev.yaml --profile all down
+#
+# Every service sits behind a profile, so a repository composed from only some of the stack packs
+# still parses and still runs the components it does have. Nothing starts without a profile named.
+name: "{{project_name}}"
+
+services:
+  # python-fastapi component, composed at backend/
+  backend:
+    profiles: ["all", "backend"]
+    build:
+      context: .
+      dockerfile: docker/backend.Dockerfile
+    image: "{{project_name}}-backend:dev"
+    ports:
+      - "8000:8000"
+    # app/core/config.py holds plain defaults rather than reading the environment, so the backend
+    # takes none here. Adding a setting means teaching Settings to read it first.
+    restart: unless-stopped
+
+  # typescript-node component, composed at service/
+  service:
+    profiles: ["all", "service"]
+    build:
+      context: .
+      dockerfile: docker/service.Dockerfile
+    image: "{{project_name}}-service:dev"
+    ports:
+      - "3000:3000"
+    environment:
+      # src/core/config.ts reads exactly these three.
+      SERVICE_NAME: "{{project_name}}-service"
+      LOG_LEVEL: "${LOG_LEVEL:-info}"
+      PORT: "3000"
+    restart: unless-stopped
+
+  # react component, composed at frontend/, served by nginx and proxying /api to the backend
+  frontend:
+    profiles: ["all", "frontend"]
+    build:
+      context: .
+      dockerfile: docker/frontend.Dockerfile
+      args:
+        # Vite inlines this at build time, so it is a build argument and never runtime environment.
+        # The default keeps the browser on one origin and lets nginx forward /api to the backend.
+        VITE_API_URL: "${VITE_API_URL:-/api}"
+        # Where that nginx proxy sends /api. The default is this file's own backend service.
+        BACKEND_UPSTREAM: "${BACKEND_UPSTREAM:-backend:8000}"
+    image: "{{project_name}}-frontend:dev"
+    ports:
+      # 5173 on the host is the port the vite dev server uses, so the bookmark does not change.
+      # 8080 in the container because nginx runs unprivileged.
+      - "5173:8080"
+    depends_on:
+      backend:
+        condition: service_healthy
+        # required false is what lets the frontend profile run in a repository that has no backend
+        # component, or on its own while the backend is being rebuilt.
+        required: false
+    restart: unless-stopped

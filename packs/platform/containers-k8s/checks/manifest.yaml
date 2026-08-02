@@ -1,0 +1,5 @@
+checks:
+  - law: EEP-IAC-02
+    kind: builtin
+    command: "file-contains-any docker FROM"
+    proves: "Versioned container definitions exist: a file under docker/ declares a base image with FROM. STACK.md documents docker build --check per Dockerfile as the deep local check."

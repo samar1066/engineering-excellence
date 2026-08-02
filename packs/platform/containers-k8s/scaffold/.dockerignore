@@ -1,0 +1,48 @@
+# One ignore file for every image, because every build in this repository uses the repository root
+# as its context (see the docker build commands in the Dockerfile headers). Keeping the context
+# small is not cosmetic: everything listed here would otherwise be uploaded to the builder on every
+# build, and a stale node_modules or .venv copied into a stage would shadow the locked install.
+
+# Version control and editor state
+.git
+.gitignore
+.github
+
+# Governance and generated agent files: never needed inside an image
+.eep
+CLAUDE.md
+AGENTS.md
+
+# Container definitions themselves, except docker/, which frontend.Dockerfile copies nginx.conf from
+docker-compose*.yaml
+docker-compose*.yml
+.dockerignore
+
+# Python component
+**/.venv
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+**/.coverage
+**/htmlcov
+
+# Node components: the lockfile is copied explicitly, an installed tree never is
+**/node_modules
+**/npm-debug.log*
+**/.vite
+**/coverage
+
+# Build output produced inside the builder stage, never carried in from the host
+**/dist
+**/build
+
+# Local environment files: configuration reaches a container as environment, not as a baked layer
+**/.env
+**/.env.*
+
+# Editor and operating system noise
+**/.DS_Store
+**/.idea
+**/.vscode
