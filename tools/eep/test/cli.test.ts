@@ -12,6 +12,7 @@ import { execa } from "execa";
 import { describe, expect, it } from "vitest";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { repoRoot } from "../src/lib/schema.js";
+import { VERSION } from "../src/version.js";
 import { childPath } from "./helpers.js";
 
 /**
@@ -119,7 +120,7 @@ async function newVerifiableDir(): Promise<string> {
     dir,
     join(".eep", "lock.yaml"),
     stringifyYaml({
-      program_version: "0.1.0",
+      program_version: VERSION,
       profile: "greenfield",
       packs: [{ name: FIXTURE_PACK, version: "1.0.0" }],
       vendored: "2026-08-01",

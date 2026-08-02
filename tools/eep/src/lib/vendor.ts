@@ -11,13 +11,9 @@ import {
 import { dirname, join, relative, resolve } from "node:path";
 import fg from "fast-glob";
 import { stringify as stringifyYaml } from "yaml";
+import { VERSION } from "../version.js";
 import { findPackDir, loadPack } from "./pack.js";
 import type { Profile } from "./resolve.js";
-
-// The lock file's own format version. Deliberately not sourced from src/version.ts: that constant
-// tracks the eep CLI binary's release version, which can move independently of the lock.yaml shape
-// this module writes. Bump this only when the lock.yaml shape itself changes.
-const PROGRAM_VERSION = "0.1.0";
 
 const SCAFFOLD_DIR_NAME = "scaffold";
 
@@ -180,8 +176,13 @@ export function vendorInto(
 
   copyDoctrineLaws(root, eepDir, implementsUnion);
 
+  // The eep that wrote this lock, not a format version of its own. It was a hardcoded 0.1.0 for as
+  // long as the field existed, so every lock any release ever wrote claimed the same thing and the
+  // field answered no question at all. A 0.1.2 binary reading a 0.2.0 lock ignored the pinned
+  // workdirs it did not understand and reported three failures nobody could explain, which is
+  // exactly the skew this field exists to make visible (see commands/verify.ts).
   const lock: Lock = {
-    program_version: PROGRAM_VERSION,
+    program_version: VERSION,
     profile,
     packs: lockPacks,
     vendored: new Date().toISOString().slice(0, 10),

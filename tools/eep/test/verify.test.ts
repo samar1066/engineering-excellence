@@ -11,11 +11,12 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { execa } from "execa";
 import fg from "fast-glob";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { stringify as stringifyYaml } from "yaml";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { runAdopt } from "../src/commands/adopt.js";
 import { formatRow, runVerify, type VerifyResult } from "../src/commands/verify.js";
 import { repoRoot } from "../src/lib/schema.js";
+import { VERSION } from "../src/version.js";
 
 const root = repoRoot();
 const SCAFFOLD = join(root, "packs", "stack", "python-fastapi", "scaffold");
@@ -267,8 +268,10 @@ function buildMultiPackEepTree(dir: string, packs: FixturePack[], lockPacks?: un
   // The workdir goes into the lock, which is the only place verify reads it from. The manifest copy
   // written by writePack is the corpus's declaration; the lock is this repository's pinned answer,
   // and a fixture that only wrote the manifest would prove nothing about what verify actually does.
+  // The version this CLI writes, so a fixture is never itself skewed and no case below inherits a
+  // version warning it did not ask for. The skew case rewrites this field deliberately.
   writeYaml(dir, join(".eep", "lock.yaml"), {
-    program_version: "0.1.0",
+    program_version: VERSION,
     profile: "greenfield",
     packs:
       lockPacks ??
@@ -298,6 +301,29 @@ function newFixtureDir(): string {
   return mkdtempSync(join(tmpdir(), "eep-verify-unit-"));
 }
 
+// Rewrites only the program_version field, leaving the rest of the lock exactly as the fixture
+// builder wrote it, so a skew case differs from a matching one in that one value and nothing else.
+function setLockProgramVersion(dir: string, version: string): void {
+  const lockPath = join(dir, ".eep", "lock.yaml");
+  const lock = parseYaml(readFileSync(lockPath, "utf8")) as Record<string, unknown>;
+  lock.program_version = version;
+  writeFileSync(lockPath, stringifyYaml(lock));
+}
+
+// The warning goes to stderr on purpose, so a script reading the rows on stdout is unaffected.
+// Asserting on it therefore means capturing that stream rather than the report object.
+async function captureStderr<T>(fn: () => Promise<T>): Promise<{ report: T; stderr: string[] }> {
+  const stderr: string[] = [];
+  const spy = vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+    stderr.push(args.map((arg) => String(arg)).join(" "));
+  });
+  try {
+    return { report: await fn(), stderr };
+  } finally {
+    spy.mockRestore();
+  }
+}
+
 describe("runVerify over a builtin only fixture", () => {
   const dirs: string[] = [];
 
@@ -310,6 +336,47 @@ describe("runVerify over a builtin only fixture", () => {
 
   afterAll(() => {
     for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
+  });
+
+  /**
+   * The lock records which eep wrote it, and this is what that record is for.
+   *
+   * A globally installed 0.1.2 binary run against a lock a 0.2.0 sync had written silently ignored
+   * the pinned workdirs it knew nothing about, ran every component's checks at the repository root,
+   * and produced three failing rows nobody could account for. Nothing in the output hinted that the
+   * two halves were different programs.
+   */
+  it("warns on stderr when the lock was written by a different eep, and gates nothing", async () => {
+    const dir = fixtureWith([{ id: "EEP-DOCS-02", severity: "blocking", command: "docs-style ." }]);
+    setLockProgramVersion(dir, "0.1.0");
+
+    const { report, stderr } = await captureStderr(() => runVerify(dir));
+
+    expect(stderr).toEqual([
+      `eep: warning: this project was synced by eep 0.1.0 and you are running ${VERSION}; re-run the sync or update the CLI if results look wrong`,
+    ]);
+    expect(find(report.results, "EEP-DOCS-02")?.status).toBe("pass");
+    expect(report.failedBlocking).toBe(0);
+  });
+
+  it("says nothing when the lock was written by this eep", async () => {
+    const dir = fixtureWith([{ id: "EEP-DOCS-02", severity: "blocking", command: "docs-style ." }]);
+
+    const { stderr } = await captureStderr(() => runVerify(dir));
+
+    expect(stderr).toEqual([]);
+  });
+
+  // Patch releases do not change what a lock means, so warning on one would train the reader to
+  // ignore the line by the time a release lands that really does read the lock differently.
+  it("stays quiet when only the patch number differs", async () => {
+    const dir = fixtureWith([{ id: "EEP-DOCS-02", severity: "blocking", command: "docs-style ." }]);
+    const [major, minor] = VERSION.split(".");
+    setLockProgramVersion(dir, `${major}.${minor}.99`);
+
+    const { stderr } = await captureStderr(() => runVerify(dir));
+
+    expect(stderr).toEqual([]);
   });
 
   it("counts a failing warning law as a warning, not a blocking failure", async () => {

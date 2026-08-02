@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import { parse as parseYaml } from "yaml";
 import { repoRoot } from "../src/lib/schema.js";
 import { vendorInto } from "../src/lib/vendor.js";
+import { VERSION } from "../src/version.js";
 
 const root = repoRoot();
 
@@ -31,7 +32,9 @@ describe("vendorInto", () => {
 
     const lock = parseYaml(readFileSync(join(target, ".eep", "lock.yaml"), "utf8")) as ParsedLock;
 
-    expect(lock.program_version).toBe("0.1.0");
+    // The eep that wrote it, read from the one place the release version lives, so this asserts the
+    // field tracks the binary rather than re-pinning a second constant that could drift from it.
+    expect(lock.program_version).toBe(VERSION);
     expect(lock.profile).toBe("evolving");
     expect(lock.packs[0]).toEqual({ name: "python-fastapi", version: "1.0.0" });
     expect(lock.vendored).toMatch(/^\d{4}-\d{2}-\d{2}$/);

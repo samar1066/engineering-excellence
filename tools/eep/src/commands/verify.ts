@@ -12,6 +12,7 @@ import {
 import type { CheckEntry } from "../lib/pack.js";
 import { type Profile, type ResolvedLaw, resolveLaws } from "../lib/resolve.js";
 import { loadWaivers, type Waiver } from "../lib/waivers.js";
+import { VERSION } from "../version.js";
 
 export type VerifyResult = {
   law: string;
@@ -110,6 +111,41 @@ function pinnedWorkdirs(packs: LockPack[]): ReadonlyMap<string, string> {
     if (pack.workdir !== null) map.set(pack.name, pack.workdir);
   }
   return map;
+}
+
+/**
+ * The `<major>.<minor>` of a version string, or null when there is nothing to compare.
+ *
+ * Patch is deliberately dropped. A patch release fixes behavior without changing what a lock means,
+ * so warning on it would train the reader to ignore the line by the time a release lands that
+ * really does read the lock differently.
+ */
+function majorMinor(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const match = /^(\d+)\.(\d+)(?:\.|$)/.exec(value.trim());
+  if (match === null) return null;
+  return `${match[1]}.${match[2]}`;
+}
+
+/**
+ * Says so when this CLI is not the CLI that wrote the lock it is about to act on.
+ *
+ * The failure this closes was three unexplainable failing rows: a globally installed 0.1.2 binary
+ * ran against a lock a 0.2.0 sync had written, silently ignored the pinned workdirs it knew nothing
+ * about, and ran every component's checks at the repository root. Nothing in the output suggested
+ * the two halves were different programs.
+ *
+ * A warning, not a refusal, and it never touches the exit code: the gate's job is to report on the
+ * repository, and a version difference is a fact about the reader's machine. It goes to stderr so a
+ * script parsing the rows on stdout is unaffected, and it is emitted before any row is printed so it
+ * frames the results it is about to explain rather than trailing them.
+ */
+function warnVersionSkew(lockVersion: unknown): void {
+  const locked = majorMinor(lockVersion);
+  if (locked === null || locked === majorMinor(VERSION)) return;
+  console.error(
+    `eep: warning: this project was synced by eep ${String(lockVersion)} and you are running ${VERSION}; re-run the sync or update the CLI if results look wrong`,
+  );
 }
 
 function toProfile(value: unknown): Profile {
@@ -343,6 +379,7 @@ export async function runVerify(
   if (!existsSync(lockPath)) throw new Error("eep: no .eep found; run eep adopt first");
 
   const lock = readYamlObject(lockPath);
+  warnVersionSkew(lock.program_version);
   const lockPacks = toLockPacks(lock.packs);
   const laws = resolveLaws(
     lockPacks.map((pack) => pack.name),
