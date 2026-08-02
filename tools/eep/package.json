@@ -1,9 +1,37 @@
 {
   "name": "engineering-excellence",
-  "version": "0.2.0",
-  "description": "Engineering Excellence Program CLI",
+  "version": "0.2.1",
+  "description": "One command turns any repository into a place where AI coding agents build software the right way: doctrine, golden paths, generated agent instructions, and machine enforced gates for FastAPI, React, TypeScript, containers, AWS CDK, and GitHub Actions",
   "license": "Apache-2.0",
   "author": "Samar Swami (@samar1066)",
+  "homepage": "https://github.com/samar1066/engineering-excellence#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/samar1066/engineering-excellence.git"
+  },
+  "bugs": {
+    "url": "https://github.com/samar1066/engineering-excellence/issues"
+  },
+  "keywords": [
+    "ai-agents",
+    "claude-code",
+    "copilot",
+    "cursor",
+    "agents-md",
+    "code-standards",
+    "code-quality",
+    "golden-path",
+    "scaffolding",
+    "monorepo",
+    "fastapi",
+    "react",
+    "typescript",
+    "aws-cdk",
+    "github-actions",
+    "ci-cd",
+    "tdd",
+    "developer-experience"
+  ],
   "type": "module",
   "bin": {
     "eep": "./dist/index.js"
