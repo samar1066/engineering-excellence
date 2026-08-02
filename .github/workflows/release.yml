@@ -43,6 +43,9 @@ jobs:
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
+      # Node 22 bundles npm 10, which signs provenance but cannot perform the
+      # trusted publishing token exchange; that arrived in npm 11.5.
+      - run: npm install -g npm@latest
       - run: npm ci
         working-directory: tools/eep
       - name: guard tag matches package version
