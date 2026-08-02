@@ -6,7 +6,7 @@ authors:
   - { name: Samar Swami, github: "@samar1066" }
 maintainers: ["@samar1066"]
 created: 2026-08-01
-updated: 2026-08-01
+updated: 2026-08-02
 ---
 
 # Packs
@@ -21,6 +21,8 @@ A pack is the layer where language agnostic doctrine meets an actual stack. Each
 
 <!-- eep:index -->
 - `stack/`: packs that bind laws to a programming language and framework combination, one pack per detected stack.
+- `platform/`: packs that bind laws to infrastructure and runtime surfaces, augmenting a repository rather than scaffolding an application.
+- `delivery/`: packs that bind laws to the pipeline a change travels through, owning continuous integration and promotion.
 <!-- /eep:index -->
 
 ## Related
@@ -28,4 +30,4 @@ A pack is the layer where language agnostic doctrine meets an actual stack. Each
 Pack names: `python-fastapi`.
 
 ---
-*Authored by Samar Swami (@samar1066) · Maintained by @samar1066 · v1.0.0 · Last reviewed 2026-08-01*
+*Authored by Samar Swami (@samar1066) · Maintained by @samar1066 · v1.0.0 · Last reviewed 2026-08-02*

@@ -6,7 +6,7 @@ authors:
   - { name: Samar Swami, github: "@samar1066" }
 maintainers: ["@samar1066"]
 created: 2026-08-01
-updated: 2026-08-01
+updated: 2026-08-02
 ---
 
 # Stack packs
@@ -21,6 +21,8 @@ A stack pack owns one language and framework pairing end to end: a blessed toolc
 
 <!-- eep:index -->
 - `python-fastapi/`: binds the implemented laws to a Python service built on FastAPI, with a blessed toolchain, an executable checks manifest, and one binding file per law.
+- `typescript-node/`: binds the implemented laws to a Node 22 service built on Fastify 5, with a blessed toolchain, an executable checks manifest, and one binding file per law.
+- `react/`: binds the implemented laws to a browser interface built with Vite, React 18, and TypeScript, including the accessibility gate that is this pack's reason to exist as a separate stack.
 <!-- /eep:index -->
 
 ## Related
@@ -28,4 +30,4 @@ A stack pack owns one language and framework pairing end to end: a blessed toolc
 Pack names: `python-fastapi`. Law IDs implemented: EEP-ARCH-01, EEP-TEST-01, EEP-TEST-03, EEP-SEC-01, EEP-SEC-02, EEP-OBS-01, EEP-OBS-02, EEP-DLV-01, EEP-DLV-02, EEP-DOCS-01, EEP-DOCS-02, EEP-DEVX-01. Law IDs declined: EEP-DOCS-03.
 
 ---
-*Authored by Samar Swami (@samar1066) · Maintained by @samar1066 · v1.0.0 · Last reviewed 2026-08-01*
+*Authored by Samar Swami (@samar1066) · Maintained by @samar1066 · v1.0.0 · Last reviewed 2026-08-02*
