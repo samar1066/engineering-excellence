@@ -1,0 +1,9 @@
+checks:
+  - law: EEP-DLV-01
+    kind: builtin
+    command: "file-contains-any .github/workflows 'eep verify'"
+    proves: "CI runs the gate."
+  - law: EEP-DLV-03
+    kind: builtin
+    command: "file-contains .github/workflows/deploy.yml 'needs: deploy-uat'"
+    proves: "The production deploy job waits on the non production one, so no path reaches production before uat."

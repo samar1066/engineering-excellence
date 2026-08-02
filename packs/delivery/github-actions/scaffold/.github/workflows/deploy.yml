@@ -1,0 +1,165 @@
+# deploy: build one image, then promote that exact image to dev, then uat, then production.
+#
+# What to configure before this workflow can run, none of it in this file:
+#
+# 1. Repository or organization variables, under Settings, Secrets and variables, Actions,
+#    Variables. No secret is needed, because there is no long lived credential to store:
+#      AWS_ROLE_ARN    the role this workflow assumes through OIDC, arn:aws:iam::<account>:role/<name>
+#      AWS_REGION      the region holding the ECR repository and the CDK stacks, for example eu-west-1
+#      ECR_REPOSITORY  the ECR repository name the image is pushed to, for example {{project_name}}
+# 2. Three environments named dev, uat, and production, under Settings, Environments. Attach
+#    required reviewers to uat and to production: the approvals in this pipeline come from those
+#    environment protection rules, never from anything written here. An environment may also carry
+#    its own AWS_ROLE_ARN and AWS_REGION, which override the repository values for the jobs that
+#    name it, so one account per stage is a variables change rather than an edit to this file.
+# 3. An IAM role whose trust policy admits this repository's OIDC subject and whose permissions
+#    allow ECR push and the CloudFormation deploy. The pack's templates/config/environments.md
+#    walks through both, with placeholders only.
+#
+# The image is tagged with the commit sha, which is immutable and names exactly one source
+# revision. That one tag is what every stage below deploys, which is the whole point of the file.
+name: deploy
+on:
+  workflow_dispatch:
+    inputs:
+      imageTag:
+        description: 'Existing image tag to promote. Leave empty to build this commit.'
+        required: false
+        type: string
+  push:
+    # The trigger branch is the team's choice, not this pack's law. The promotion pipeline binds to
+    # GitHub environments, so any branching model works: rename main below to trunk, develop, or
+    # whatever your integration branch is called, list several, or delete the push trigger entirely
+    # and release only through workflow_dispatch. Nothing else in this file has to change.
+    branches: [main]
+permissions:
+  id-token: write
+  contents: read
+env:
+  AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+jobs:
+  # Build once. Every later job consumes this job's image-tag output and builds nothing.
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      image-tag: ${{ steps.tag.outputs.image-tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: resolve the image tag
+        id: tag
+        # The dispatch input arrives through env rather than through an expression inside the
+        # script, so a tag can never be read as shell. It is then checked against the character
+        # set an image tag is allowed to use, which refuses anything that could be a command.
+        env:
+          REQUESTED_TAG: ${{ inputs.imageTag }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          set -eu
+          tag="${REQUESTED_TAG:-$COMMIT_SHA}"
+          case "$tag" in
+            *[!A-Za-z0-9._-]*) echo "refusing image tag: $tag" ; exit 1 ;;
+          esac
+          echo "image-tag=$tag" >> "$GITHUB_OUTPUT"
+      - name: assume the deployment role
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: log in to ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+      - name: build and push the image
+        # Skipped when the dispatch named a tag: that image already exists, and rebuilding over it
+        # would replace the bytes uat approved with different ones under the same name.
+        if: inputs.imageTag == ''
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          IMAGE_TAG: ${{ steps.tag.outputs.image-tag }}
+        run: |
+          set -eu
+          docker build -f docker/backend.Dockerfile -t "$REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" .
+          docker push "$REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+
+  # Stage one, non production. No protection rule is required here: dev is where the artifact
+  # proves it starts, connects, and serves before anyone is asked to approve anything.
+  deploy-dev:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: dev
+    outputs:
+      # Forwarded verbatim, never recomputed, so the next stage promotes this exact reference.
+      image-tag: ${{ needs.build.outputs.image-tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: assume the deployment role
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: install infra dependencies
+        working-directory: infra
+        run: npm ci
+      - name: deploy dev
+        working-directory: infra
+        env:
+          IMAGE_TAG: ${{ needs.build.outputs.image-tag }}
+        run: npx cdk deploy {{project_name}}-dev --require-approval never --context "imageTag=$IMAGE_TAG"
+
+  # Stage two, still non production. Attach required reviewers to the uat environment so this stage
+  # waits for a person, and so production can never be reached without someone having looked.
+  deploy-uat:
+    needs: deploy-dev
+    runs-on: ubuntu-latest
+    environment: uat
+    outputs:
+      image-tag: ${{ needs.deploy-dev.outputs.image-tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: assume the deployment role
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: install infra dependencies
+        working-directory: infra
+        run: npm ci
+      - name: deploy uat
+        working-directory: infra
+        env:
+          IMAGE_TAG: ${{ needs.deploy-dev.outputs.image-tag }}
+        run: npx cdk deploy {{project_name}}-uat --require-approval never --context "imageTag=$IMAGE_TAG"
+
+  # Production, last. The needs line below is the structural promise EEP-DLV-03 asks for: there is
+  # no path through this file that reaches production without uat having succeeded first, and the
+  # tag it deploys is the one uat approved, forwarded hop by hop from the single build job. Adding
+  # a second production job that skips this chain would defeat the law, not satisfy it faster.
+  deploy-prod:
+    needs: deploy-uat
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: assume the deployment role
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: install infra dependencies
+        working-directory: infra
+        run: npm ci
+      - name: deploy prod
+        working-directory: infra
+        env:
+          IMAGE_TAG: ${{ needs.deploy-uat.outputs.image-tag }}
+        run: npx cdk deploy {{project_name}}-prod --require-approval never --context "imageTag=$IMAGE_TAG"

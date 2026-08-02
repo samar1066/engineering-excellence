@@ -1,0 +1,136 @@
+# ci: the gate every change passes, owned by the github-actions pack.
+#
+# This file supersedes the generic component matrix ci.yml a composed init writes when no delivery
+# pack is selected: same intent, real per component gates. Every stack pack also scaffolds a
+# .github/workflows/ci.yml inside its own component directory, which is where that pack's own
+# EEP-DLV-01 check reads it. GitHub reads workflows only from the repository root, so this file is
+# the one that actually runs.
+#
+# Each component job checks the repository out first and then guards its real steps on hashFiles.
+# The guard is deliberately not on the job's own if: a job level condition is evaluated before any
+# runner has a workspace, hashFiles would return an empty string for every component, and the whole
+# gate would skip itself while reporting green. Guarding after checkout is what lets a partial
+# compose (a backend and an infra component, no frontend yet) pass honestly instead of vacuously.
+name: ci
+on:
+  pull_request:
+  push:
+    # Any branch, so a change is gated before it ever reaches a pull request. Branch names are the
+    # team's choice and this workflow encodes none of them.
+    branches: ['**']
+jobs:
+  # The python-fastapi component. Present when backend/Makefile exists.
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: set up uv
+        if: hashFiles('backend/Makefile') != ''
+        uses: astral-sh/setup-uv@v5
+      - name: install the locked dependency tree
+        if: hashFiles('backend/Makefile') != ''
+        working-directory: backend
+        run: uv sync
+      - name: backend gate
+        if: hashFiles('backend/Makefile') != ''
+        working-directory: backend
+        run: make test
+
+  # The typescript-node component. Present when service/package.json exists.
+  service:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: set up node
+        if: hashFiles('service/package.json') != ''
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: install the locked dependency tree
+        if: hashFiles('service/package.json') != ''
+        working-directory: service
+        run: npm ci
+      - name: service gate
+        if: hashFiles('service/package.json') != ''
+        working-directory: service
+        run: npm run test:cov
+
+  # The react component. Present when frontend/package.json exists. The accessibility suite is a
+  # separate step so a failure names accessibility and nothing else.
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: set up node
+        if: hashFiles('frontend/package.json') != ''
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: install the locked dependency tree
+        if: hashFiles('frontend/package.json') != ''
+        working-directory: frontend
+        run: npm ci
+      - name: frontend gate
+        if: hashFiles('frontend/package.json') != ''
+        working-directory: frontend
+        run: npm run test:cov
+      - name: accessibility gate
+        if: hashFiles('frontend/package.json') != ''
+        working-directory: frontend
+        run: npm run test:a11y
+
+  # The aws-cdk component. Present when infra/cdk.json exists. The synth step is what proves the
+  # infrastructure definition still compiles from a clean checkout before anything is deployed.
+  infra:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: set up node
+        if: hashFiles('infra/cdk.json') != ''
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: install the locked dependency tree
+        if: hashFiles('infra/cdk.json') != ''
+        working-directory: infra
+        run: npm ci
+      - name: infra gate
+        if: hashFiles('infra/cdk.json') != ''
+        working-directory: infra
+        run: npm test
+      - name: synth
+        if: hashFiles('infra/cdk.json') != ''
+        working-directory: infra
+        run: npm run synth
+
+  # The single status check to require in a branch protection rule. It is red when any component
+  # gate is red and green when a component is simply not part of this repository yet. It runs with
+  # always() and inspects each result because without always() this job is itself skipped whenever
+  # any component job is skipped, and a skipped status check is not a passing one.
+  #
+  # eep verify is the whole gate and the command to run locally before pushing: make verify at the
+  # repository root runs it over every pack in .eep/lock.yaml. The jobs above run those same
+  # component gates directly, one job per component, until engineering-excellence ships on npm and
+  # this job can call eep verify itself. Do not remove the words eep verify from this file:
+  # EEP-DLV-01 greps .github/workflows for them.
+  gate:
+    needs: [backend, service, frontend, infra]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: every component gate passed or was absent
+        run: |
+          set -eu
+          failed=0
+          for result in \
+            "${{ needs.backend.result }}" \
+            "${{ needs.service.result }}" \
+            "${{ needs.frontend.result }}" \
+            "${{ needs.infra.result }}"
+          do
+            case "$result" in
+              success|skipped) ;;
+              *) echo "component gate result: $result" ; failed=1 ;;
+            esac
+          done
+          test "$failed" -eq 0

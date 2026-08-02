@@ -1,0 +1,56 @@
+name: github-actions
+kind: delivery
+version: 1.0.0
+tier: 1
+source: builtin
+detect:
+  - file: .github/workflows/deploy.yml
+requires: []
+implements:
+  - EEP-DLV-01
+  - EEP-DLV-03
+declines:
+  - law: EEP-ARCH-01
+    reason: "Stack scoped law. This pack ships no application code and declares no layers; every component its workflows build enforces its own layer direction."
+  - law: EEP-TEST-01
+    reason: "Stack scoped law. The suites live in the components this pipeline gates; a workflow file has no suite of its own to collect."
+  - law: EEP-TEST-03
+    reason: "Stack scoped law. Behavior coverage is measured inside each component, and this pack's ci.yml is what makes those measurements run on every change."
+  - law: EEP-SEC-01
+    reason: "Stack scoped law. Each component pack already runs the repository wide credential scan; this pack's contribution is structural, federating to AWS through OIDC so no long lived key exists to commit."
+  - law: EEP-SEC-02
+    reason: "Backend scoped law. This pack opens no data store connection; the services it deploys own their queries."
+  - law: EEP-OBS-01
+    reason: "Backend scoped law. The services this pipeline deploys emit the logs; a workflow run produces a build log, not an application log stream."
+  - law: EEP-OBS-02
+    reason: "Backend scoped law. Trace context starts in the deployed services, not in the runner that shipped them."
+  - law: EEP-DLV-02
+    reason: "Stack scoped law. Workflows pin actions by major version and install nothing of their own; each component's pack owns the lockfile for its dependency tree."
+  - law: EEP-DOCS-01
+    reason: "Stack scoped law. A consumer's governed documents live with the components; this pack contributes a .github directory and no documents."
+  - law: EEP-DOCS-02
+    reason: "Stack scoped law. The markdown style gate is resolved repository wide by the core and already declared by every component pack; a second declaration here would only duplicate a row."
+  - law: EEP-DOCS-03
+    reason: "Corpus scoped law; consumer repositories are not required to index every directory."
+  - law: EEP-DEVX-01
+    reason: "Stack scoped law. The one command setup entry point belongs to the components and to the composed root Makefile, neither of which this pack writes."
+# The blessed delivery toolchain is GitHub Actions itself: hosted ubuntu-latest runners, GitHub
+# environments for the approvals at uat and production, and OpenID Connect federation to AWS so a
+# deployment role is assumed per run and no long lived access key is ever stored. Amazon ECR holds
+# the promoted image and the AWS CDK CLI applies it, both driven from the workflows in scaffold/.
+# The toolchain schema has no ci or delivery category, so that is recorded here, in README.md, and
+# in STACK.md rather than invented as a key below.
+toolchain:
+  declined:
+    - category: package_manager
+      reason: "A workflow declares actions by version, not packages; the components it runs bring their own package managers."
+    - category: linter
+      reason: "No workflow linter is blessed yet: the structural guarantees this pack owes are proven by its two checks rather than by a style pass over YAML."
+    - category: unit_test
+      reason: "There is no unit under test here; the workflows are proven by the component gates they run and by the promotion checks in checks/manifest.yaml."
+    - category: e2e_test
+      reason: "The end to end proof of this pack is a real promotion run through dev, uat, and production, which cannot be rehearsed in a repository with no AWS account attached."
+    - category: hooks
+      reason: "The pre commit gate is installed by eep adopt for the repository as a whole; this pack adds no hook of its own."
+authors: [{ name: Samar Swami, github: "@samar1066" }]
+maintainers: ["@samar1066"]
