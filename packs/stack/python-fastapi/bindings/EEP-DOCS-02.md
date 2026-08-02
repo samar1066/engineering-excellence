@@ -37,7 +37,10 @@ on a zero based ordered list, renumber the list to start at one; do not delete
 the numbering and switch to bullets to dodge the rule. Run this check on a
 document before treating it as finished, since a fix is cheap inline and
 expensive once a document has already been reviewed and merged on the
-assumption it was clean.
+assumption it was clean. Files named CLAUDE.md and AGENTS.md are excluded at
+every depth, because eep only co owns them: the block it generates inside such
+a file is style clean by construction, and the prose a repository keeps around
+that block is the repository's own rather than governed corpus documentation.
 
 ---
 *Authored by Samar Swami (@samar1066) · Maintained by @samar1066 · v1.0.0 · Last reviewed 2026-08-01*

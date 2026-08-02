@@ -20,9 +20,18 @@ export type BuiltinResult = { ok: boolean; detail: string; skipped?: true };
 // .eep/cache is eep's own scratch space.
 const ALWAYS_IGNORED = ["**/.git/**", "**/node_modules/**", "**/.venv/**", "**/.eep/cache/**"];
 
+// Co owned agent configuration surfaces, at any depth: the managed block eep writes into them is
+// style clean by construction, and the user content around it is not corpus governed prose. A
+// repository that has kept its own CLAUDE.md for years must not have adopting eep turn every em
+// dash in it into a blocking gate failure. The same exclusion holds for docs-frontmatter, which
+// would otherwise demand a title and an authors list inside an agent configuration file. Both the
+// anchored and the nested form are listed because a leading "**/" is not guaranteed to match a path
+// with no directory component.
+const AGENT_FILE_IGNORED = ["CLAUDE.md", "**/CLAUDE.md", "AGENTS.md", "**/AGENTS.md"];
+
 // The markdown builtins additionally skip the whole vendored .eep tree: those files are copies of
 // corpus documents the consumer neither wrote nor can fix, and the corpus validates its own style.
-const DOCS_IGNORED = [...ALWAYS_IGNORED, "**/.eep/**"];
+const DOCS_IGNORED = [...ALWAYS_IGNORED, "**/.eep/**", ...AGENT_FILE_IGNORED];
 
 const MAX_SCAN_BYTES = 1024 * 1024;
 const BINARY_SNIFF_BYTES = 8192;

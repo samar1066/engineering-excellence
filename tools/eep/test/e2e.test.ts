@@ -17,6 +17,7 @@ import { validateCorpus } from "../src/commands/corpus.js";
 import { runExplain } from "../src/commands/explain.js";
 import { runInit } from "../src/commands/init.js";
 import { runVerify, type VerifyResult } from "../src/commands/verify.js";
+import { AUTHORITY_SENTENCE, BLOCK_BEGIN, BLOCK_END } from "../src/lib/managed-block.js";
 import { repoRoot } from "../src/lib/schema.js";
 
 /**
@@ -324,9 +325,39 @@ describe("eep adopt on an existing application that has never seen eep", () => {
     expect(agents).toContain("cov-fail-under=85");
     expect(agents).toContain("Profile: evolving.");
 
-    // Byte identical, not merely similar: the two files are one generated body written twice, and
-    // an agent reading either one has to be held to exactly the same instructions.
+    // Everything generated sits inside the managed block, so a repository that later adds prose of
+    // its own around it keeps that prose across every sync (see lib/managed-block.ts).
+    expect(agents.startsWith(BLOCK_BEGIN)).toBe(true);
+    expect(agents.endsWith(`${BLOCK_END}\n`)).toBe(true);
+    expect(agents).toContain(AUTHORITY_SENTENCE);
+
+    // This application carried no agent files of its own, so both names come out as the block and
+    // nothing else, which makes them byte identical as well as block identical. An agent reading
+    // either name has to be held to exactly the same instructions.
     expect(readFileSync(join(adoptee, "CLAUDE.md"))).toEqual(readFileSync(agentsPath));
+  });
+
+  /**
+   * The same application one release later, once its team has written instructions of their own
+   * into the file eep also writes into. Their bytes survive, ours are refreshed in place, and the
+   * result is stable under a second run.
+   */
+  it("refreshes only its own block when the application adds prose around it", async () => {
+    const claudePath = join(adoptee, "CLAUDE.md");
+    const generated = readFileSync(claudePath, "utf8");
+    const preface = "# House rules\n\nDeploys go out on Thursdays.\n";
+    const epilogue = "\n## Local conventions\n\nRun make dev first.\n";
+    writeFileSync(claudePath, `${preface}\n${generated}${epilogue}`);
+
+    await runAdopt({ targetDir: adoptee, corpusDir: CORPUS, profile: "evolving", yes: true });
+
+    const after = readFileSync(claudePath, "utf8");
+    expect(after.startsWith(preface)).toBe(true);
+    expect(after.endsWith(epilogue)).toBe(true);
+    expect(after).toContain("| Law | Pack | Title | Severity | Check |");
+
+    await runAdopt({ targetDir: adoptee, corpusDir: CORPUS, profile: "evolving", yes: true });
+    expect(readFileSync(claudePath, "utf8")).toBe(after);
   });
 });
 

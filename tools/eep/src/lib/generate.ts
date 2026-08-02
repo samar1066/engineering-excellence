@@ -1,9 +1,10 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import fg from "fast-glob";
 import { parse as parseYaml } from "yaml";
 import { VERSION } from "../version.js";
 import { readFrontmatter } from "./frontmatter.js";
+import { stripManagedBlock, writeManagedBlock } from "./managed-block.js";
 import { type Profile, type ResolvedLaw, resolveLaws } from "./resolve.js";
 import type { PackLayout } from "./vendor.js";
 
@@ -21,8 +22,9 @@ const VERIFY_FOOTER =
   "Before declaring work done run `eep verify`. On failure run `eep explain <LAW-ID>`. " +
   "Configuration authority is .eep/lock.yaml; eep.yaml is a human readable record only.";
 
-// Both names carry the same bytes, always. Agents read one or the other depending on the tool that
-// spawned them, and two documents that could drift apart would be two sets of instructions.
+// Both names carry the same generated block, always. Agents read one or the other depending on the
+// tool that spawned them, and two generated regions that could drift apart would be two sets of
+// instructions. What surrounds the block is the repository's own and may differ between the two.
 const AGENT_FILE_NAMES = ["AGENTS.md", "CLAUDE.md"] as const;
 
 const ROUTER_HEADING = "## Components and where their golden paths live";
@@ -313,9 +315,22 @@ function buildComponentBody(packName: string, stackBody: string): string {
   ].join("\n\n")}\n`;
 }
 
-function writeAgentPair(dir: string, body: string): void {
-  mkdirSync(dir, { recursive: true });
-  for (const name of AGENT_FILE_NAMES) writeFileSync(join(dir, name), body);
+/**
+ * Writes one generated body into both agent file names in `dir`, as a managed block each.
+ *
+ * The invariant this upholds is no longer "the two files are byte identical": a repository may have
+ * carried its own CLAUDE.md for years and its own AGENTS.md for a week, and neither is ours to
+ * reconcile. What must be identical is the generated region, because an agent reading one name or
+ * the other has to be held to exactly the same instructions, and that follows from both calls
+ * receiving the same body here.
+ *
+ * `relDir` is the target relative directory, used only to name a file in a malformed block warning.
+ */
+function writeAgentPair(dir: string, relDir: string, body: string): void {
+  for (const name of AGENT_FILE_NAMES) {
+    const relPath = relDir === "" ? name : `${relDir}/${name}`;
+    writeManagedBlock(join(dir, name), relPath, body);
+  }
 }
 
 function firstLine(text: string): string {
@@ -333,9 +348,12 @@ function firstLine(text: string): string {
  * back to one, where the whole layout stops having component files at all.
  *
  * Ownership is read off the file rather than diffed out of the previous lock, which this function
- * cannot see (vendorInto has already rewritten it by the time anything generates). A file is
- * deleted only when its first line carries the generated component header, so a hand written
- * CLAUDE.md a team keeps in a directory of their own is never touched.
+ * cannot see (vendorInto has already rewritten it by the time anything generates). Only what this
+ * program wrote is removed: a file that is nothing but our managed block goes entirely, a file whose
+ * managed block sits under content someone else wrote keeps that content and loses only the block,
+ * and a hand written CLAUDE.md carrying no block at all is never touched. A file left over from
+ * 0.1.x or 0.2.x is generated whole (its first line carries the component header) and is deleted as
+ * it always was.
  */
 function removeStaleComponentFiles(targetDir: string, keep: ReadonlySet<string>): void {
   const matches = fg
@@ -350,14 +368,25 @@ function removeStaleComponentFiles(targetDir: string, keep: ReadonlySet<string>)
   for (const relPath of matches) {
     if (keep.has(dirname(relPath))) continue;
     const absPath = join(targetDir, relPath);
-    if (!firstLine(readFileSync(absPath, "utf8")).includes(COMPONENT_HEADER_MARKER)) continue;
-    rmSync(absPath, { force: true });
+    const content = readFileSync(absPath, "utf8");
+    if (firstLine(content).includes(COMPONENT_HEADER_MARKER)) {
+      rmSync(absPath, { force: true });
+      continue;
+    }
+    const remainder = stripManagedBlock(content);
+    if (remainder === content) continue;
+    if (remainder === null) {
+      rmSync(absPath, { force: true });
+      continue;
+    }
+    writeFileSync(absPath, remainder);
   }
 }
 
 /**
- * Builds this repository's agent instructions from its vendored `.eep/` tree and writes them,
- * byte identical, to `AGENTS.md` and `CLAUDE.md`.
+ * Builds this repository's agent instructions from its vendored `.eep/` tree and writes them into
+ * the managed block of `AGENTS.md` and `CLAUDE.md`, leaving whatever else those files carry exactly
+ * where it was (see lib/managed-block.ts).
  *
  * The layout forks on what the lock records, and only there (see isMultiLayout).
  *
@@ -374,10 +403,10 @@ function removeStaleComponentFiles(targetDir: string, keep: ReadonlySet<string>)
  * proves. The root keeps everything that is true of the whole repository (the constitution, the
  * laws in force, the gate) and points at the rest.
  *
- * Regeneration overwrites every file it owns, and deletes the component files a narrower pack set
- * leaves behind (see removeStaleComponentFiles), so the result always reflects only the current
- * lock. Throws when `${targetDir}/.eep/lock.yaml` is absent (no vendored corpus to read), and
- * propagates whatever resolveLaws throws, including its rejection of a "steady" profile.
+ * Regeneration rewrites every managed block it owns, and removes the component blocks a narrower
+ * pack set leaves behind (see removeStaleComponentFiles), so the generated regions always reflect
+ * only the current lock. Throws when `${targetDir}/.eep/lock.yaml` is absent (no vendored corpus to
+ * read), and propagates whatever resolveLaws throws, including its rejection of a "steady" profile.
  */
 export function generateAgentFiles(targetDir: string): void {
   const lockPath = join(targetDir, ".eep", "lock.yaml");
@@ -421,13 +450,14 @@ export function generateAgentFiles(targetDir: string): void {
     : [];
   removeStaleComponentFiles(targetDir, new Set(componentDirs));
 
-  writeAgentPair(targetDir, `${sections.join("\n\n")}\n`);
+  writeAgentPair(targetDir, "", `${sections.join("\n\n")}\n`);
 
   if (!multi) return;
   for (const pack of packs) {
     if (pack.workdir === null) continue;
     writeAgentPair(
       join(targetDir, pack.workdir),
+      pack.workdir,
       buildComponentBody(pack.name, readStackBody(targetDir, pack.name)),
     );
   }

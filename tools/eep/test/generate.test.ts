@@ -10,9 +10,15 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import fg from "fast-glob";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { stringify as stringifyYaml } from "yaml";
 import { generateAgentFiles } from "../src/lib/generate.js";
+import {
+  AUTHORITY_SENTENCE,
+  BLOCK_BEGIN,
+  BLOCK_BEGIN_PREFIX,
+  BLOCK_END,
+} from "../src/lib/managed-block.js";
 import { repoRoot } from "../src/lib/schema.js";
 import { vendorInto } from "../src/lib/vendor.js";
 import { VERSION } from "../src/version.js";
@@ -48,6 +54,40 @@ function componentFilesUnder(dir: string): string[] {
       onlyFiles: true,
     })
     .sort();
+}
+
+// The three regions of a co owned agent file, split on the markers. Every preservation assertion
+// below is stated as an equality on one of these, so a failure says which region moved.
+function splitOnBlock(content: string): { above: string; block: string; below: string } {
+  const lines = content.split("\n");
+  const begin = lines.findIndex((line) => line.startsWith(BLOCK_BEGIN_PREFIX));
+  const end = lines.findIndex((line) => line.trim() === BLOCK_END);
+  expect(begin, "no begin marker in the file").toBeGreaterThan(-1);
+  expect(end, "no end marker after the begin marker").toBeGreaterThan(begin);
+  return {
+    above: lines.slice(0, begin).join("\n"),
+    block: lines.slice(begin, end + 1).join("\n"),
+    below: lines.slice(end + 1).join("\n"),
+  };
+}
+
+function blockOf(content: string): string {
+  return splitOnBlock(content).block;
+}
+
+// Collected into an array rather than read off the spy afterwards: mockRestore clears the recorded
+// calls, so a spy read after it has been restored reports nothing at all.
+function captureWarnings(run: () => void): string[] {
+  const warnings: string[] = [];
+  const warn = vi.spyOn(console, "warn").mockImplementation((...args: unknown[]) => {
+    warnings.push(args.map((arg) => String(arg)).join(" "));
+  });
+  try {
+    run();
+  } finally {
+    warn.mockRestore();
+  }
+  return warnings;
 }
 
 function tableRows(content: string, heading: string): string[] {
@@ -164,7 +204,10 @@ describe("generateAgentFiles", () => {
     rmSync(tmp, { recursive: true, force: true });
   });
 
-  it("writes AGENTS.md and CLAUDE.md as byte identical files", () => {
+  // Into a repository carrying neither file there is nothing to preserve, so both come out as the
+  // block and nothing else, which makes them byte identical as well as block identical. The pair
+  // invariant that survives user content is asserted separately below.
+  it("writes AGENTS.md and CLAUDE.md as byte identical files when neither existed", () => {
     generateAgentFiles(tmp);
 
     expect(existsSync(join(tmp, "AGENTS.md"))).toBe(true);
@@ -282,6 +325,197 @@ describe("generateAgentFiles", () => {
 });
 
 /**
+ * Brownfield coexistence: every shape a CLAUDE.md can already be in when eep first runs.
+ *
+ * CLAUDE.md and AGENTS.md are not this program's files. A repository that carries one carries it
+ * because a team wrote it, and through 0.2.2 adopting eep silently replaced it. Each case below is
+ * one pre state and the one thing that may happen to it, and every one of them ends with a file
+ * carrying a well formed block, which is what makes the second run a refresh and nothing else.
+ */
+describe("generateAgentFiles into agent files a repository already owns", () => {
+  // Genuinely opinionated, and in one place genuinely contradictory: the em dash is what the docs
+  // style law bans, and the last sentence is what the authority sentence inside the block exists to
+  // overrule. Both belong in the fixture, because both are what real repositories contain.
+  const OWN_CLAUDE = [
+    "# House rules",
+    "",
+    `Deploys go out on Thursdays ${EM_DASH} never on a Friday.`,
+    "",
+    "Skip tests for prototypes; we clean up before the demo.",
+    "",
+  ].join("\n");
+
+  const OWN_AGENTS = ["# Agent notes", "", "Ask before touching the payments module.", ""].join(
+    "\n",
+  );
+
+  let tmp: string;
+
+  beforeEach(() => {
+    tmp = newVendoredTarget();
+  });
+
+  afterEach(() => {
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  function writeOwn(relPath: string, content: string): void {
+    writeFileSync(join(tmp, relPath), content);
+  }
+
+  it("writes the block and nothing else when the file is absent", () => {
+    generateAgentFiles(tmp);
+    const content = readText(tmp, "CLAUDE.md");
+
+    expect(content.startsWith(`${BLOCK_BEGIN}\n`)).toBe(true);
+    expect(content.endsWith(`${BLOCK_END}\n`)).toBe(true);
+
+    // The authority sentence is the first line of the block body, above the generated header, so it
+    // is read before any of the instructions it orders.
+    const lines = content.split("\n");
+    expect(lines[1]).toBe(AUTHORITY_SENTENCE);
+    expect(lines[2]).toBe("");
+    expect(lines[3]).toBe(
+      `# Agent instructions (generated by eep ${VERSION}; do not edit, regenerate with eep adopt)`,
+    );
+  });
+
+  it("appends below an existing file, preserving it byte for byte with one blank line between", () => {
+    writeOwn("CLAUDE.md", OWN_CLAUDE);
+
+    generateAgentFiles(tmp);
+    const content = readText(tmp, "CLAUDE.md");
+
+    // The strongest statement available: the file the team wrote is a byte exact prefix of the file
+    // this program left behind.
+    expect(content.startsWith(OWN_CLAUDE)).toBe(true);
+    expect(content.slice(OWN_CLAUDE.length)).toBe(`\n${blockOf(content)}\n`);
+
+    // Exactly one blank line of separation, stated on the lines rather than inferred from the slice.
+    const lines = content.split("\n");
+    const begin = lines.findIndex((line) => line.startsWith(BLOCK_BEGIN_PREFIX));
+    expect(lines[begin - 1]).toBe("");
+    expect(lines[begin - 2]).not.toBe("");
+
+    // The user's own words are still there, contradiction and banned dash included. Neither is this
+    // program's to edit.
+    expect(content).toContain("Skip tests for prototypes");
+    expect(content).toContain(EM_DASH);
+  });
+
+  it("refreshes an existing block in place, preserving the bytes above and below it", () => {
+    const above = "# House rules\n\nDeploys go out on Thursdays.\n";
+    const below = "## Local conventions\n\nRun make dev before anything else.\n";
+    const stale = [
+      `${BLOCK_BEGIN_PREFIX}0.2.9; do not edit inside this block; regenerate with eep sync -->`,
+      "Stale generated body from an older release.",
+      BLOCK_END,
+    ].join("\n");
+    writeOwn("CLAUDE.md", `${above}\n${stale}\n\n${below}`);
+
+    generateAgentFiles(tmp);
+    const content = readText(tmp, "CLAUDE.md");
+    const { above: keptAbove, block, below: keptBelow } = splitOnBlock(content);
+
+    expect(keptAbove).toBe(above);
+    expect(keptBelow).toBe(`\n${below}`);
+    expect(block.startsWith(BLOCK_BEGIN)).toBe(true);
+    expect(block).not.toContain("Stale generated body");
+    expect(block).toContain("## The laws in force");
+    expect(content).toContain("Run make dev before anything else.");
+  });
+
+  it("leaves a file carrying a stray begin marker untouched and names it in a warning", () => {
+    const damaged = `# House rules\n\n${BLOCK_BEGIN}\nHalf a block.\n`;
+    writeOwn("CLAUDE.md", damaged);
+
+    const warnings = captureWarnings(() => generateAgentFiles(tmp));
+
+    expect(readText(tmp, "CLAUDE.md")).toBe(damaged);
+    const message = warnings.join("\n");
+    expect(message).toContain("CLAUDE.md");
+    expect(message).toContain("malformed eep managed block");
+    expect(message).toContain("deleting the whole block");
+
+    // One damaged file stops nothing else: the other half of the pair is written normally.
+    expect(readText(tmp, "AGENTS.md").startsWith(BLOCK_BEGIN)).toBe(true);
+  });
+
+  it("leaves a file whose end marker precedes its begin marker untouched", () => {
+    const damaged = `${BLOCK_END}\n\n# House rules\n\n${BLOCK_BEGIN}\n`;
+    writeOwn("CLAUDE.md", damaged);
+
+    const warnings = captureWarnings(() => generateAgentFiles(tmp));
+
+    expect(readText(tmp, "CLAUDE.md")).toBe(damaged);
+    expect(warnings.join("\n")).toContain("CLAUDE.md");
+  });
+
+  /**
+   * A file 0.1.x or 0.2.x wrote is generated whole, so there is no user content in it to preserve
+   * and appending underneath would leave a second, stale copy of the instructions above the current
+   * ones. The whole file becomes the marked form.
+   */
+  it("migrates a file an earlier release generated whole", () => {
+    const legacy = [
+      "# Agent instructions (generated by eep 0.2.2; do not edit, regenerate with eep adopt)",
+      "",
+      "Profile: greenfield. Every law blocks.",
+      "",
+      "Stale law table from the release before managed blocks.",
+      "",
+    ].join("\n");
+    writeOwn("CLAUDE.md", legacy);
+
+    generateAgentFiles(tmp);
+    const content = readText(tmp, "CLAUDE.md");
+
+    expect(content.startsWith(`${BLOCK_BEGIN}\n`)).toBe(true);
+    expect(content.endsWith(`${BLOCK_END}\n`)).toBe(true);
+    expect(content).not.toContain("Stale law table");
+    // Exactly one generated header survives: the one inside the block.
+    expect(content.split("# Agent instructions (generated by eep").length - 1).toBe(1);
+  });
+
+  /**
+   * The invariant that replaces "the two files are byte identical".
+   *
+   * A repository may have carried its own CLAUDE.md for years and its own AGENTS.md for a week, and
+   * neither is this program's to reconcile. What must never differ is the generated region, because
+   * an agent reading one name or the other has to be held to exactly the same laws.
+   */
+  it("keeps the pair's blocks identical while the files themselves differ", () => {
+    writeOwn("CLAUDE.md", OWN_CLAUDE);
+    writeOwn("AGENTS.md", OWN_AGENTS);
+
+    generateAgentFiles(tmp);
+    const claude = readText(tmp, "CLAUDE.md");
+    const agents = readText(tmp, "AGENTS.md");
+
+    expect(blockOf(claude)).toBe(blockOf(agents));
+    expect(claude).not.toBe(agents);
+    expect(claude.startsWith(OWN_CLAUDE)).toBe(true);
+    expect(agents.startsWith(OWN_AGENTS)).toBe(true);
+  });
+
+  // Idempotence is what makes this safe to run from a pre-commit hook and from CI: the same input
+  // has to produce the same bytes, from every pre state, forever.
+  it.each([
+    ["absent", null],
+    ["appended", OWN_CLAUDE],
+    ["legacy", "# Agent instructions (generated by eep 0.2.2; do not edit)\n\nOld body.\n"],
+  ])("regenerates to the same bytes from the %s state", (_label, pre) => {
+    if (pre !== null) writeOwn("CLAUDE.md", pre);
+
+    generateAgentFiles(tmp);
+    const first = readText(tmp, "CLAUDE.md");
+    generateAgentFiles(tmp);
+
+    expect(readText(tmp, "CLAUDE.md")).toBe(first);
+  });
+});
+
+/**
  * The composed layout: a router at the root, one instruction file per component.
  *
  * Both fixture packs are vendored into a target that already carries the component directory, so
@@ -330,15 +564,16 @@ describe("generateAgentFiles in a repository composed of several packs", () => {
     expect(content.includes(EN_DASH)).toBe(false);
   });
 
-  it("writes both root files, and each component pair, byte identical", () => {
-    expect(readFileSync(join(tmp, "AGENTS.md")).equals(readFileSync(join(tmp, "CLAUDE.md")))).toBe(
-      true,
-    );
-    expect(
-      readFileSync(join(tmp, COMPONENT_DIR, "AGENTS.md")).equals(
-        readFileSync(join(tmp, COMPONENT_DIR, "CLAUDE.md")),
-      ),
-    ).toBe(true);
+  // Into a repository carrying no agent files of its own, block identity and byte identity are the
+  // same statement. The pair invariant that survives user content is asserted where user content
+  // exists, below.
+  it("writes both root files, and each component pair, with identical blocks", () => {
+    for (const dir of [tmp, join(tmp, COMPONENT_DIR)]) {
+      const agents = readFileSync(join(dir, "AGENTS.md"), "utf8");
+      const claude = readFileSync(join(dir, "CLAUDE.md"), "utf8");
+      expect(blockOf(agents)).toBe(blockOf(claude));
+      expect(agents).toBe(claude);
+    }
   });
 
   it("gives the pinned component its own golden path and nothing the root already owns", () => {
@@ -418,6 +653,85 @@ describe("generateAgentFiles in a repository composed of several packs", () => {
     generateAgentFiles(tmp);
 
     expect(readText(tmp, "notes", "CLAUDE.md")).toBe("# Team notes\n\nHand written.\n");
+  });
+});
+
+/**
+ * The same coexistence, one directory down.
+ *
+ * A component directory is where a team is most likely to have written instructions of their own,
+ * because it is where the code they own lives. The component files get the identical treatment the
+ * root pair gets, and the component's own content is preserved on a narrowing sync too, where the
+ * block is removed and the file is not.
+ */
+describe("generateAgentFiles into component agent files a repository already owns", () => {
+  const OWN_COMPONENT = [
+    "# Service notes",
+    "",
+    "The queue consumer is not idempotent yet.",
+    "",
+  ].join("\n");
+  const OWN_COMPONENT_AGENTS = [
+    "# Service agent notes",
+    "",
+    "Deploy through the pipeline.",
+    "",
+  ].join("\n");
+
+  let corpus: string;
+  let tmp: string;
+
+  beforeEach(() => {
+    corpus = newFixtureCorpus();
+    tmp = mkdtempSync(join(tmpdir(), "eep-generate-multi-own-"));
+    mkdirSync(join(tmp, COMPONENT_DIR), { recursive: true });
+    writeFileSync(join(tmp, COMPONENT_DIR, "CLAUDE.md"), OWN_COMPONENT);
+    writeFileSync(join(tmp, COMPONENT_DIR, "AGENTS.md"), OWN_COMPONENT_AGENTS);
+    vendorInto(tmp, corpus, [COMPONENT_PACK, ROOT_PACK], "greenfield");
+    generateAgentFiles(tmp);
+  });
+
+  afterEach(() => {
+    for (const dir of [corpus, tmp]) rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("appends the component block below the component's own content, preserving it", () => {
+    const claude = readText(tmp, COMPONENT_DIR, "CLAUDE.md");
+    const agents = readText(tmp, COMPONENT_DIR, "AGENTS.md");
+
+    expect(claude.startsWith(OWN_COMPONENT)).toBe(true);
+    expect(agents.startsWith(OWN_COMPONENT_AGENTS)).toBe(true);
+    expect(claude).toContain(COMPONENT_SENTINEL);
+    expect(blockOf(claude)).toBe(blockOf(agents));
+    expect(claude).not.toBe(agents);
+  });
+
+  it("regenerates the component files to the same bytes", () => {
+    const before = [
+      readText(tmp, COMPONENT_DIR, "CLAUDE.md"),
+      readText(tmp, COMPONENT_DIR, "AGENTS.md"),
+    ];
+
+    generateAgentFiles(tmp);
+
+    expect([
+      readText(tmp, COMPONENT_DIR, "CLAUDE.md"),
+      readText(tmp, COMPONENT_DIR, "AGENTS.md"),
+    ]).toEqual(before);
+  });
+
+  /**
+   * Narrowing the pack set still removes the golden path this repository no longer enforces, but a
+   * file is only deleted when it was nothing but the block. Here it was not, so the block goes and
+   * the team's own notes stay exactly where they were.
+   */
+  it("removes only the block from a dropped component, keeping the component's own content", () => {
+    vendorInto(tmp, corpus, [ROOT_PACK], "greenfield");
+    generateAgentFiles(tmp);
+
+    expect(existsSync(join(tmp, COMPONENT_DIR, "CLAUDE.md"))).toBe(true);
+    expect(readText(tmp, COMPONENT_DIR, "CLAUDE.md")).toBe(OWN_COMPONENT);
+    expect(readText(tmp, COMPONENT_DIR, "AGENTS.md")).toBe(OWN_COMPONENT_AGENTS);
   });
 });
 

@@ -341,6 +341,29 @@ describe("runBuiltin docs-style", () => {
     expect(result.ok).toBe(true);
     expect(result.detail).toContain("in 1 markdown files");
   });
+
+  /**
+   * The brownfield case this exclusion exists for.
+   *
+   * A repository that has kept its own CLAUDE.md for years has an em dash in it, and adopting eep
+   * must not turn that into a blocking gate failure on a file eep only co owns. The generated block
+   * inside it is style clean by construction, and the prose around it is the team's, not the
+   * corpus's. Every other markdown file in the same tree is still governed, which is what the second
+   * half of this asserts: the exclusion is by name, not a hole in the sweep.
+   */
+  it("ignores CLAUDE.md and AGENTS.md at any depth while still flagging normal markdown", () => {
+    write(tmp, "CLAUDE.md", `# House rules\n\nWe ship fast ${EM_DASH} and we test.\n`);
+    write(tmp, "AGENTS.md", `# Agents\n\nRead this first ${EM_DASH} then work.\n`);
+    write(tmp, "backend/CLAUDE.md", `# Backend\n\nComponent notes ${EM_DASH} keep them short.\n`);
+
+    expect(runBuiltin("docs-style .", tmp).ok).toBe(true);
+
+    write(tmp, "docs/note.md", `# Note\n\nOne thing ${EM_DASH} then another.\n`);
+    const result = runBuiltin("docs-style .", tmp);
+    expect(result.ok).toBe(false);
+    expect(result.detail).toContain("docs/note.md");
+    expect(result.detail).not.toContain("CLAUDE.md");
+  });
 });
 
 describe("runBuiltin docs-frontmatter", () => {
@@ -394,6 +417,16 @@ describe("runBuiltin docs-frontmatter", () => {
     expect(result.ok).toBe(false);
     expect(result.detail).toContain(".github/ISSUE_TEMPLATE.md");
     expect(result.detail).toContain("missing title and authors");
+  });
+
+  // The same co ownership exclusion the style check makes: an agent configuration file is not a
+  // governed document, and demanding a title and an authors list inside one would fail every
+  // repository the moment it adopts.
+  it("ignores CLAUDE.md and AGENTS.md", () => {
+    write(tmp, "docs/CLAUDE.md", "# House rules\n\nNo frontmatter at all.\n");
+    write(tmp, "docs/AGENTS.md", "# Agents\n\nNo frontmatter at all.\n");
+
+    expect(runBuiltin("docs-frontmatter docs", tmp).ok).toBe(true);
   });
 });
 
