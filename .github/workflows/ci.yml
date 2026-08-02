@@ -27,5 +27,12 @@ jobs:
         with: { node-version: 22, cache: npm, cache-dependency-path: tools/eep/package-lock.json }
       - run: npm ci
         working-directory: tools/eep
-      - run: npx tsx src/index.ts pack validate ../../packs/stack/python-fastapi
+      # Every pack in the corpus, not one named pack: a pack that lands without being added here
+      # would otherwise ship unvalidated.
+      - name: validate every pack
         working-directory: tools/eep
+        run: |
+          for dir in ../../packs/*/*/; do
+            echo "pack validate $dir"
+            npx tsx src/index.ts pack validate "$dir" || exit 1
+          done

@@ -7,6 +7,8 @@ detect:
   - file: pyproject.toml
     contains: "fastapi"
 requires: []
+component_dir: backend
+workdir: backend
 implements:
   - EEP-ARCH-01
   - EEP-TEST-01

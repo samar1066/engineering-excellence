@@ -121,18 +121,21 @@ describe("runSync", () => {
     expect(existsSync(join(targetDir, "CLAUDE.md"))).toBe(true);
   });
 
+  // The roadmap tokens named here (angular, go) are ones no wave of the current roadmap builds.
+  // The subject is the skip and refuse behavior, not which packs happen to exist this week, and a
+  // token whose pack is about to land would turn these red the day it does.
   it("skips frameworks that are not built yet and continues with the rest", async () => {
     const targetDir = newTargetDir("eep-sync-partial-");
 
     const result = await runSync({
       targetDir,
       corpusDir,
-      tokens: ["fastapi", "node", "angular"],
+      tokens: ["fastapi", "go", "angular"],
       yes: true,
     });
 
     expect(result.packs).toEqual(["python-fastapi"]);
-    expect(result.comingSoon).toEqual(["node", "angular"]);
+    expect(result.comingSoon).toEqual(["go", "angular"]);
     expect(existsSync(join(targetDir, ".eep", "lock.yaml"))).toBe(true);
   });
 
@@ -149,7 +152,7 @@ describe("runSync", () => {
     const targetDir = newTargetDir("eep-sync-unbuilt-");
 
     await expect(
-      runSync({ targetDir, corpusDir, tokens: ["node", "angular"], yes: true }),
+      runSync({ targetDir, corpusDir, tokens: ["go", "angular"], yes: true }),
     ).rejects.toThrow(/nothing to sync/);
     expectNothingWritten(targetDir);
   });

@@ -24,17 +24,20 @@ describe("resolveFrameworks", () => {
     });
   });
 
+  // Tokens whose packs no wave of the current roadmap builds. Naming a token that is about to ship
+  // would make these assertions expire the day its pack lands, and the subject here is the alias
+  // and roadmap machinery, not which packs happen to exist this week.
   it("resolves case insensitively and reports a known but unbuilt pack as coming soon", () => {
-    expect(resolveFrameworks(["NODE"], corpusDir)).toEqual({
+    expect(resolveFrameworks(["ANGULAR"], corpusDir)).toEqual({
       packs: [],
-      comingSoon: ["node"],
+      comingSoon: ["angular"],
       unknown: [],
     });
   });
 
   it("reports every alias of an unbuilt pack under one primary token", () => {
-    const resolved = resolveFrameworks(["typescript", "ts", "node"], corpusDir);
-    expect(resolved.comingSoon).toEqual(["node"]);
+    const resolved = resolveFrameworks(["java", "spring"], corpusDir);
+    expect(resolved.comingSoon).toEqual(["java"]);
     expect(resolved.packs).toEqual([]);
   });
 
@@ -45,10 +48,31 @@ describe("resolveFrameworks", () => {
   });
 
   it("splits a mixed list into available packs and coming soon tokens, in the typed order", () => {
-    const resolved = resolveFrameworks(["fastapi", "node", "angular"], corpusDir);
+    const resolved = resolveFrameworks(["fastapi", "java", "angular"], corpusDir);
     expect(resolved.packs).toEqual(["python-fastapi"]);
-    expect(resolved.comingSoon).toEqual(["node", "angular"]);
+    expect(resolved.comingSoon).toEqual(["java", "angular"]);
     expect(resolved.unknown).toEqual([]);
+  });
+
+  // Containers and their orchestration are one pack, so the token a user reaches for first has to
+  // land on it too. Asserted as "docker resolves exactly as k8s does" rather than against a fixed
+  // outcome, so this keeps holding the day that pack ships.
+  it("maps docker onto the same pack k8s names", () => {
+    expect(resolveFrameworks(["docker"], corpusDir)).toEqual(resolveFrameworks(["k8s"], corpusDir));
+    expect(validTokens(corpusDir)).toContain("docker");
+  });
+
+  it("reports docker under the k8s primary token while that pack is unbuilt", () => {
+    const empty = mkdtempSync(join(tmpdir(), "eep-empty-corpus-"));
+    try {
+      expect(resolveFrameworks(["docker"], empty)).toEqual({
+        packs: [],
+        comingSoon: ["k8s"],
+        unknown: [],
+      });
+    } finally {
+      rmSync(empty, { recursive: true, force: true });
+    }
   });
 
   it("deduplicates repeated tokens and sorts the resolved packs", () => {
@@ -74,7 +98,7 @@ describe("listCapabilities", () => {
   it("reports the roadmap tokens with no pack in the corpus as coming soon", () => {
     const { comingSoon } = listCapabilities(corpusDir);
     expect(comingSoon.length).toBeGreaterThan(0);
-    expect(comingSoon).toContain("node");
+    expect(comingSoon).toContain("angular");
   });
 
   it("never lists the same token as both available and coming soon", () => {

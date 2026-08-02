@@ -11,7 +11,7 @@ import {
 import { dirname, join, relative, resolve } from "node:path";
 import fg from "fast-glob";
 import { stringify as stringifyYaml } from "yaml";
-import { loadPack } from "./pack.js";
+import { findPackDir, loadPack } from "./pack.js";
 import type { Profile } from "./resolve.js";
 
 // The lock file's own format version. Deliberately not sourced from src/version.ts: that constant
@@ -45,20 +45,6 @@ type ResolvedPack = {
 function toStringArray(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return value.filter((item): item is string => typeof item === "string");
-}
-
-// Pack directories are not addressable by name directly: the corpus's authoritative pack identity
-// is the manifest's own "name" field (pack.schema.json), not the directory basename. Mirrors
-// resolve.ts's findPackDir exactly, including throwing here rather than returning undefined, so
-// the two lookups cannot silently drift apart. Every pack manifest under the corpus is loaded and
-// compared, sorted first, until one with a matching name turns up.
-function findPackDir(root: string, packName: string): string {
-  const manifestPaths = fg.sync("packs/*/*/pack.yaml", { cwd: root }).sort();
-  for (const relPath of manifestPaths) {
-    const dir = dirname(join(root, relPath));
-    if (loadPack(dir).name === packName) return dir;
-  }
-  throw new Error(`eep: pack ${packName} not found in corpus`);
 }
 
 // Resolves and validates every requested pack before anything is written to targetDir, so an

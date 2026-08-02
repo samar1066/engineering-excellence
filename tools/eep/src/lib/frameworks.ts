@@ -47,6 +47,10 @@ const ALIASES: ReadonlyArray<readonly [token: string, pack: string]> = [
   ["terraform", "terraform"],
   ["k8s", "containers-k8s"],
   ["kubernetes", "containers-k8s"],
+  // Containers and their orchestration ship as one pack: the Dockerfiles a service builds from and
+  // the manifests that run them are the same decision, and a user who types "docker" is asking for
+  // that pack, not for a separate one. Listed after k8s so the primary token stays k8s.
+  ["docker", "containers-k8s"],
   ["power-platform", "power-platform"],
   ["github-actions", "github-actions"],
   ["azure-devops", "azure-devops"],

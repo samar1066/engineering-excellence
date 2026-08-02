@@ -1,9 +1,9 @@
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import fg from "fast-glob";
 import { parse as parseYaml } from "yaml";
 import { readFrontmatter } from "./frontmatter.js";
-import { type CheckEntry, loadPack } from "./pack.js";
+import { type CheckEntry, findPackDir, loadPack } from "./pack.js";
 
 export type Profile = "greenfield" | "evolving" | "steady";
 
@@ -17,6 +17,10 @@ export type ResolvedLaw = {
   declined: string | null;
   changedOnly: boolean;
   waivable: boolean;
+  // The pack manifest's optional `workdir`, carried here rather than re-read by every consumer:
+  // an entry already names its pack, and verify has to know where that pack's checks run without
+  // opening the manifest a second time. null means "the pack declared none": run at the root.
+  workdir: string | null;
 };
 
 type DeclineEntry = { law: string; reason: string };
@@ -34,17 +38,6 @@ function readProfile(corpusDir: string, profile: Profile): Record<string, unknow
   const path = join(corpusDir, "profiles", `${profile}.yaml`);
   if (!existsSync(path)) throw new Error(`eep: unknown profile ${profile}`);
   return parseYamlObject(path);
-}
-
-// Pack directories are not addressable by name directly; every pack manifest under the corpus
-// must be loaded and compared until one with a matching name turns up.
-function findPackDir(corpusDir: string, packName: string): string {
-  const manifestPaths = fg.sync("packs/*/*/pack.yaml", { cwd: corpusDir }).sort();
-  for (const relPath of manifestPaths) {
-    const dir = dirname(join(corpusDir, relPath));
-    if (loadPack(dir).name === packName) return dir;
-  }
-  throw new Error(`eep: pack ${packName} not found in corpus`);
 }
 
 function findLawFile(corpusDir: string, id: string): string | null {
@@ -87,6 +80,12 @@ function toWaivable(value: unknown): boolean {
   return value !== false;
 }
 
+// pack.yaml's `workdir` is optional (see schemas/pack.schema.json), so anything other than a
+// non-empty string means the pack made no claim and its checks belong at the repository root.
+function toWorkdir(value: unknown): string | null {
+  return typeof value === "string" && value !== "" ? value : null;
+}
+
 // Declined entries fall back to the law id as a title when the law file cannot be found at all,
 // since a decline is still reportable even for a law the corpus has not authored yet.
 function readOptionalTitle(lawPath: string | null, fallback: string): string {
@@ -95,6 +94,16 @@ function readOptionalTitle(lawPath: string | null, fallback: string): string {
   return typeof data.title === "string" ? data.title : fallback;
 }
 
+/**
+ * The active law set for a pack selection: one entry per (law id, pack) pair, sorted by law id and
+ * then by pack name.
+ *
+ * A law two packs both implement resolves twice, once per pack, and both entries carry that pack's
+ * own check. This is not redundancy: each pack proves the law over its own component with its own
+ * toolchain, so a repository carrying a backend and a frontend has to satisfy the coverage law in
+ * both, and one pack passing must never stand in for the other. Declines resolve per pack for the
+ * same reason: a pack declining a law says nothing about whether its sibling implements it.
+ */
 export function resolveLaws(
   packNames: string[],
   profile: Profile,
@@ -106,7 +115,6 @@ export function resolveLaws(
   }
   const changedOnly = profileFile.enforcement === "changed";
 
-  const seen = new Set<string>();
   const resolved: ResolvedLaw[] = [];
 
   for (const packName of packNames) {
@@ -114,11 +122,9 @@ export function resolveLaws(
     const pack = loadPack(dir);
     const implementsList = toStringArray(pack.manifest.implements);
     const declineEntries = toDeclineEntries(pack.manifest.declines);
+    const workdir = toWorkdir(pack.manifest.workdir);
 
     for (const id of implementsList) {
-      if (seen.has(id)) continue;
-      seen.add(id);
-
       const lawPath = findLawFile(corpusDir, id);
       if (lawPath === null) throw new Error(`eep: law ${id} not found in corpus`);
       const { data } = readFrontmatter(lawPath);
@@ -134,13 +140,11 @@ export function resolveLaws(
         declined: null,
         changedOnly,
         waivable: toWaivable(data.waivable),
+        workdir,
       });
     }
 
     for (const entry of declineEntries) {
-      if (seen.has(entry.law)) continue;
-      seen.add(entry.law);
-
       const lawPath = findLawFile(corpusDir, entry.law);
       resolved.push({
         id: entry.law,
@@ -154,10 +158,11 @@ export function resolveLaws(
         // A declined law has no check to fail, so nothing can ever be waived against it. The
         // permissive default is kept rather than reading the law file, so declines stay cheap.
         waivable: true,
+        workdir,
       });
     }
   }
 
-  resolved.sort((a, b) => a.id.localeCompare(b.id));
+  resolved.sort((a, b) => a.id.localeCompare(b.id) || a.pack.localeCompare(b.pack));
   return resolved;
 }

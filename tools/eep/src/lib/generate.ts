@@ -115,12 +115,16 @@ function checkCell(law: ResolvedLaw): string {
   return `\`${escapeTableCell(command)}\``;
 }
 
+// One row per resolved entry, so a law two packs both implement appears once per pack with that
+// pack's own check command. An agent reading this table has to be able to see that the coverage
+// law it is about to satisfy is gated twice, by two different commands, in two different
+// directories.
 function buildLawTable(laws: ResolvedLaw[]): string {
-  const header = "| Law | Title | Severity | Check |";
-  const divider = "| --- | --- | --- | --- |";
+  const header = "| Law | Pack | Title | Severity | Check |";
+  const divider = "| --- | --- | --- | --- | --- |";
   const rows = laws.map(
     (law) =>
-      `| ${law.id} | ${escapeTableCell(law.title)} | ${severityCell(law)} | ${checkCell(law)} |`,
+      `| ${law.id} | ${escapeTableCell(law.pack)} | ${escapeTableCell(law.title)} | ${severityCell(law)} | ${checkCell(law)} |`,
   );
   return ["## The laws in force", "", header, divider, ...rows].join("\n");
 }

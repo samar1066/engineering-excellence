@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { join, relative, resolve, sep } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import fg from "fast-glob";
 import { parse as parseYaml } from "yaml";
 import type { Violation } from "../commands/corpus.js";
@@ -63,6 +63,26 @@ export function loadPack(packDir: string): Pack {
   const checks = readChecksManifest(dir);
   const name = typeof manifest.name === "string" ? manifest.name : "";
   return { name, dir, manifest, checks };
+}
+
+/**
+ * The directory of the pack named `packName`, under `<corpusDir>/packs/<kind>/<name>/`.
+ *
+ * Pack directories are not addressable by name directly: a pack's authoritative identity is its
+ * manifest's own `name` field (see pack.schema.json), not the directory basename, so every manifest
+ * under the corpus is loaded and compared, in sorted order, until one matches.
+ *
+ * Throws rather than returning undefined. Every caller (resolve, vendor, composed init) is about to
+ * act on the pack it asked for, and a silently missing one would resolve fewer laws, vendor less
+ * doctrine, or scaffold nothing, all of which look like success.
+ */
+export function findPackDir(corpusDir: string, packName: string): string {
+  const manifestPaths = fg.sync("packs/*/*/pack.yaml", { cwd: corpusDir }).sort();
+  for (const relPath of manifestPaths) {
+    const dir = dirname(join(corpusDir, relPath));
+    if (loadPack(dir).name === packName) return dir;
+  }
+  throw new Error(`eep: pack ${packName} not found in corpus`);
 }
 
 function toStringArray(value: unknown): string[] {

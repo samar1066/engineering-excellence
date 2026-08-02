@@ -66,7 +66,7 @@ describe("generateAgentFiles", () => {
     const content = readFileSync(join(tmp, "AGENTS.md"), "utf8");
 
     expect(content).toContain("## The laws in force");
-    expect(content).toContain("| Law | Title | Severity | Check |");
+    expect(content).toContain("| Law | Pack | Title | Severity | Check |");
 
     const implementedRow = content.split("\n").find((line) => line.includes("EEP-TEST-03"));
     expect(implementedRow).toBeDefined();
@@ -75,6 +75,25 @@ describe("generateAgentFiles", () => {
     const declinedRow = content.split("\n").find((line) => line.includes("EEP-DOCS-03"));
     expect(declinedRow).toBeDefined();
     expect(declinedRow).toContain("declined");
+  });
+
+  // Which pack enforces a law is what an agent needs to know before it goes looking for the
+  // command, and it is the only thing telling two rows for one law apart once several packs are
+  // vendored side by side.
+  it("names the enforcing pack in every row, including the declined one", () => {
+    generateAgentFiles(tmp);
+    // Sliced at the section heading, not grepped for "| EEP-" across the whole document: the
+    // vendored STACK.md carries its own law tables, whose columns are in a different order.
+    const lines = readFileSync(join(tmp, "AGENTS.md"), "utf8").split("\n");
+    const start = lines.indexOf("## The laws in force");
+    expect(start).toBeGreaterThan(-1);
+    const rows = lines.slice(start).filter((line) => line.startsWith("| EEP-"));
+
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      expect(row.split("|")[2]?.trim()).toBe("python-fastapi");
+    }
+    expect(rows.find((row) => row.includes("EEP-DOCS-03"))).toContain("| python-fastapi |");
   });
 
   it("ends with the verify footer and contains no dash characters or unstripped footers", () => {

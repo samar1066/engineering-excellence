@@ -14,7 +14,7 @@ import fg from "fast-glob";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { stringify as stringifyYaml } from "yaml";
 import { runAdopt } from "../src/commands/adopt.js";
-import { runVerify, type VerifyResult } from "../src/commands/verify.js";
+import { formatRow, runVerify, type VerifyResult } from "../src/commands/verify.js";
 import { repoRoot } from "../src/lib/schema.js";
 
 const root = repoRoot();
@@ -202,8 +202,11 @@ type FixtureLaw = {
   id: string;
   severity: "blocking" | "warning" | "advisory";
   command: string;
+  kind?: "builtin" | "shell";
   waivable?: boolean;
 };
+
+type FixturePack = { name: string; laws: FixtureLaw[]; workdir?: string };
 
 const PACK_NAME = "fixture-pack";
 
@@ -211,7 +214,48 @@ function writeYaml(dir: string, relPath: string, value: unknown): void {
   write(dir, relPath, stringifyYaml(value));
 }
 
-function buildEepTree(dir: string, laws: FixtureLaw[], packs?: unknown): void {
+function writePack(dir: string, pack: FixturePack): void {
+  const packDir = join(".eep", "packs", "stack", pack.name);
+  const manifest: Record<string, unknown> = {
+    name: pack.name,
+    kind: "stack",
+    version: "1.0.0",
+    implements: pack.laws.map((law) => law.id),
+  };
+  if (pack.workdir !== undefined) manifest.workdir = pack.workdir;
+  writeYaml(dir, join(packDir, "pack.yaml"), manifest);
+  writeYaml(dir, join(packDir, "checks", "manifest.yaml"), {
+    checks: pack.laws.map((law) => ({
+      law: law.id,
+      kind: law.kind ?? "builtin",
+      command: law.command,
+      proves: "Fixture check.",
+    })),
+  });
+}
+
+// One law file per law id, however many packs implement it: doctrine states a law once, and packs
+// bind to it. Writing it per pack would let two packs disagree about a law's own severity.
+function writeLawFiles(dir: string, packs: FixturePack[]): void {
+  const written = new Set<string>();
+  for (const pack of packs) {
+    for (const law of pack.laws) {
+      if (written.has(law.id)) continue;
+      written.add(law.id);
+      const frontmatter: Record<string, unknown> = {
+        id: law.id,
+        title: `Fixture law ${law.id}`,
+        severity: law.severity,
+        maturity: "standard",
+      };
+      if (law.waivable !== undefined) frontmatter.waivable = law.waivable;
+      const body = `---\n${stringifyYaml(frontmatter)}---\n\n## Statement\n\nFixture.\n`;
+      write(dir, join(".eep", "doctrine", "fixture", "laws", `${law.id}.md`), body);
+    }
+  }
+}
+
+function buildMultiPackEepTree(dir: string, packs: FixturePack[], lockPacks?: unknown): void {
   writeYaml(dir, join(".eep", "profiles", "greenfield.yaml"), {
     name: "greenfield",
     enforcement: "all",
@@ -220,43 +264,22 @@ function buildEepTree(dir: string, laws: FixtureLaw[], packs?: unknown): void {
   writeYaml(dir, join(".eep", "lock.yaml"), {
     program_version: "0.1.0",
     profile: "greenfield",
-    packs: packs ?? [{ name: PACK_NAME, version: "1.0.0" }],
+    packs: lockPacks ?? packs.map((pack) => ({ name: pack.name, version: "1.0.0" })),
     vendored: "2026-08-01",
   });
 
-  const packDir = join(".eep", "packs", "stack", PACK_NAME);
-  writeYaml(dir, join(packDir, "pack.yaml"), {
-    name: PACK_NAME,
-    kind: "stack",
-    version: "1.0.0",
-    implements: laws.map((law) => law.id),
-  });
-  writeYaml(dir, join(packDir, "checks", "manifest.yaml"), {
-    checks: laws.map((law) => ({
-      law: law.id,
-      kind: "builtin",
-      command: law.command,
-      proves: "Fixture check.",
-    })),
-  });
-
-  for (const law of laws) {
-    const frontmatter: Record<string, unknown> = {
-      id: law.id,
-      title: `Fixture law ${law.id}`,
-      severity: law.severity,
-      maturity: "standard",
-    };
-    if (law.waivable !== undefined) frontmatter.waivable = law.waivable;
-    const body = `---\n${stringifyYaml(frontmatter)}---\n\n## Statement\n\nFixture.\n`;
-    write(dir, join(".eep", "doctrine", "fixture", "laws", `${law.id}.md`), body);
-  }
+  for (const pack of packs) writePack(dir, pack);
+  writeLawFiles(dir, packs);
 
   mkdirSync(join(dir, ".eep", "schemas"), { recursive: true });
   copyFileSync(
     join(root, "schemas", "waivers.schema.json"),
     join(dir, ".eep", "schemas", "waivers.schema.json"),
   );
+}
+
+function buildEepTree(dir: string, laws: FixtureLaw[], packs?: unknown): void {
+  buildMultiPackEepTree(dir, [{ name: PACK_NAME, laws }], packs);
 }
 
 function newFixtureDir(): string {
@@ -371,6 +394,214 @@ describe("runVerify over a builtin only fixture", () => {
     );
 
     await expect(runVerify(dir)).rejects.toThrow("packs[0] has no name");
+  });
+});
+
+function findFor(results: VerifyResult[], law: string, pack: string): VerifyResult | undefined {
+  return results.find((result) => result.law === law && result.pack === pack);
+}
+
+/**
+ * A law two packs both implement has to be proved twice, once per pack.
+ *
+ * This is the defect the per pack execution change closes: the first pack's result used to stand
+ * in for every other pack's, so a repository whose service passed the coverage law never ran the
+ * frontend's coverage command at all, and reported green while half of it was unchecked.
+ */
+describe("runVerify with two packs implementing one law", () => {
+  const dirs: string[] = [];
+
+  afterAll(() => {
+    for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
+  });
+
+  function fixtureWith(packs: FixturePack[]): string {
+    const dir = newFixtureDir();
+    dirs.push(dir);
+    buildMultiPackEepTree(dir, packs);
+    return dir;
+  }
+
+  const SHARED = "EEP-DEVX-01";
+
+  it("runs both packs' checks and reports one row for each", async () => {
+    const dir = fixtureWith([
+      {
+        name: "pack-a",
+        laws: [{ id: SHARED, severity: "blocking", command: "file-contains a.txt marker" }],
+      },
+      {
+        name: "pack-b",
+        laws: [{ id: SHARED, severity: "blocking", command: "file-contains b.txt marker" }],
+      },
+    ]);
+    write(dir, "a.txt", "marker\n");
+
+    const report = await runVerify(dir);
+    const rows = report.results.filter((result) => result.law === SHARED);
+
+    expect(rows).toHaveLength(2);
+    expect(rows.map((row) => row.pack)).toEqual(["pack-a", "pack-b"]);
+    expect(findFor(report.results, SHARED, "pack-a")?.status).toBe("pass");
+    expect(findFor(report.results, SHARED, "pack-b")?.status).toBe("fail");
+    expect(findFor(report.results, SHARED, "pack-b")?.detail).toContain("b.txt does not exist");
+  });
+
+  it("counts a blocking failure once per failing pack", async () => {
+    const dir = fixtureWith([
+      {
+        name: "pack-a",
+        laws: [{ id: SHARED, severity: "blocking", command: "file-contains a.txt marker" }],
+      },
+      {
+        name: "pack-b",
+        laws: [{ id: SHARED, severity: "blocking", command: "file-contains b.txt marker" }],
+      },
+    ]);
+
+    const report = await runVerify(dir);
+
+    expect(report.failedBlocking).toBe(2);
+  });
+
+  it("waives the law across every pack that failed it, and refuses an illegal waiver once", async () => {
+    const dir = fixtureWith([
+      {
+        name: "pack-a",
+        laws: [
+          { id: "EEP-SEC-01", severity: "blocking", command: "secrets-scan", waivable: false },
+        ],
+      },
+      {
+        name: "pack-b",
+        laws: [
+          { id: "EEP-SEC-01", severity: "blocking", command: "secrets-scan", waivable: false },
+        ],
+      },
+    ]);
+    write(dir, "leak.py", AWS_KEY_LINE);
+    write(
+      dir,
+      join(".eep", "waivers.yaml"),
+      waiverYaml("2026-11-01").replace("EEP-DOCS-02", "EEP-SEC-01"),
+    );
+
+    const report = await runVerify(dir);
+    const rows = report.results.filter((result) => result.law === "EEP-SEC-01");
+
+    expect(rows).toHaveLength(2);
+    for (const row of rows) {
+      expect(row.status).toBe("fail");
+      expect(row.detail).toContain("waiver refused");
+    }
+    // The illegal waiver is one document to delete, so it is reported once however many packs
+    // refused it.
+    expect(report.results.filter((result) => result.law === "EEP-GOV-WAIVER")).toHaveLength(1);
+  });
+});
+
+/**
+ * A pack that declares `workdir: W` owns the component at <target>/W. Its checks have to run there,
+ * or a composed repository would run every pack's toolchain against the repository root, where none
+ * of their files are.
+ */
+describe("runVerify with a pack that declares a workdir", () => {
+  const dirs: string[] = [];
+
+  afterAll(() => {
+    for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
+  });
+
+  function fixtureWith(laws: FixtureLaw[], workdir = "svc"): string {
+    const dir = newFixtureDir();
+    dirs.push(dir);
+    buildMultiPackEepTree(dir, [{ name: "svc-pack", workdir, laws }]);
+    return dir;
+  }
+
+  const DEVX: FixtureLaw = {
+    id: "EEP-DEVX-01",
+    severity: "blocking",
+    command: "file-contains marker.txt hello",
+  };
+
+  it("resolves a builtin file argument under the workdir", async () => {
+    const dir = fixtureWith([DEVX]);
+    write(dir, join("svc", "marker.txt"), "hello\n");
+
+    const report = await runVerify(dir);
+    const result = find(report.results, "EEP-DEVX-01");
+
+    expect(result?.status).toBe("pass");
+    expect(result?.pack).toBe("svc-pack");
+  });
+
+  it("does not find the same file at the repository root", async () => {
+    const dir = fixtureWith([DEVX]);
+    mkdirSync(join(dir, "svc"), { recursive: true });
+    write(dir, "marker.txt", "hello\n");
+
+    const report = await runVerify(dir);
+
+    expect(find(report.results, "EEP-DEVX-01")?.status).toBe("fail");
+  });
+
+  it("runs a shell check with the workdir as its working directory", async () => {
+    const dir = fixtureWith([
+      { id: "EEP-DEVX-01", severity: "blocking", kind: "shell", command: "test -f marker.txt" },
+    ]);
+    write(dir, join("svc", "marker.txt"), "hello\n");
+
+    const report = await runVerify(dir);
+
+    expect(find(report.results, "EEP-DEVX-01")?.status).toBe("pass");
+  });
+
+  it("keeps the secrets scan repository wide, outside the workdir included", async () => {
+    const dir = fixtureWith([{ id: "EEP-SEC-01", severity: "blocking", command: "secrets-scan" }]);
+    write(dir, join("svc", "clean.py"), "value = 1\n");
+    write(dir, "leak.py", AWS_KEY_LINE);
+
+    const report = await runVerify(dir);
+    const secrets = find(report.results, "EEP-SEC-01");
+
+    expect(secrets?.status).toBe("fail");
+    expect(secrets?.detail).toContain("leak.py");
+  });
+
+  // The same pack has to keep working in the single component repository it was written for, where
+  // its code sits at the root and the component directory was never created.
+  it("falls back to the repository root when the declared workdir does not exist", async () => {
+    const dir = fixtureWith([DEVX]);
+    write(dir, "marker.txt", "hello\n");
+
+    const report = await runVerify(dir);
+
+    expect(find(report.results, "EEP-DEVX-01")?.status).toBe("pass");
+  });
+});
+
+describe("formatRow", () => {
+  it("prints status, law, pack, then detail", () => {
+    expect(
+      formatRow({
+        law: "EEP-DEVX-01",
+        pack: "python-fastapi",
+        status: "pass",
+        severity: "blocking",
+        detail: 'Makefile contains "setup"',
+      }),
+    ).toBe('PASS EEP-DEVX-01 [python-fastapi] Makefile contains "setup"');
+  });
+
+  it("labels every status the report can carry", () => {
+    const base = { law: "EEP-DEVX-01", pack: "svc", severity: "blocking" } as const;
+
+    expect(formatRow({ ...base, status: "fail", detail: "d" })).toBe("FAIL EEP-DEVX-01 [svc] d");
+    expect(formatRow({ ...base, status: "waived", detail: "d" })).toBe(
+      "WAIVED EEP-DEVX-01 [svc] d",
+    );
+    expect(formatRow({ ...base, status: "skipped", detail: "d" })).toBe("SKIP EEP-DEVX-01 [svc] d");
   });
 });
 

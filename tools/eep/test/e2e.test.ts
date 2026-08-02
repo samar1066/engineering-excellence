@@ -319,8 +319,8 @@ describe("eep adopt on an existing application that has never seen eep", () => {
     const agents = readFileSync(agentsPath, "utf8");
 
     expect(agents).toContain("# python-fastapi golden path");
-    expect(agents).toContain("| Law | Title | Severity | Check |");
-    expect(agents).toContain("| EEP-TEST-03 |");
+    expect(agents).toContain("| Law | Pack | Title | Severity | Check |");
+    expect(agents).toContain("| EEP-TEST-03 | python-fastapi |");
     expect(agents).toContain("cov-fail-under=85");
     expect(agents).toContain("Profile: evolving.");
 

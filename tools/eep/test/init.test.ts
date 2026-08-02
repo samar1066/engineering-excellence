@@ -1,5 +1,6 @@
 import {
   chmodSync,
+  cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -7,10 +8,11 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { delimiter, join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import { execa } from "execa";
 import fg from "fast-glob";
 import { describe, expect, it, vi } from "vitest";
+import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { runInit } from "../src/commands/init.js";
 import { TIP_LINE } from "../src/lib/install-offer.js";
 import { repoRoot } from "../src/lib/schema.js";
@@ -212,5 +214,400 @@ describe("runInit guidance and the global install offer", () => {
     );
     expect(output).not.toContain(TIP_LINE);
     expect(output).not.toContain("tip:");
+  });
+});
+
+/**
+ * Composed init: one project, several components.
+ *
+ * The corpus itself carries one pack today, so a composed run needs a corpus that carries two. The
+ * fixture below is the real python-fastapi pack (the component this program actually ships) plus a
+ * minimal second stack pack and a delivery pack, copied alongside the doctrine, schemas, profiles,
+ * and constitution the vendor step reads. Everything else about the run, including the vendoring
+ * and the generated agent files, is the shipping code path.
+ */
+const FIXTURE_STACK_PACK = "svcfixture";
+const FIXTURE_DELIVERY_PACK = "deliveryfixture";
+
+function writeFile(dir: string, relPath: string, contents: string): void {
+  const absPath = join(dir, relPath);
+  mkdirSync(dirname(absPath), { recursive: true });
+  writeFileSync(absPath, contents);
+}
+
+function writeFixtureStackPack(corpus: string, componentDir: string): void {
+  const packDir = join("packs", "stack", FIXTURE_STACK_PACK);
+  writeFile(
+    corpus,
+    join(packDir, "pack.yaml"),
+    stringifyYaml({
+      name: FIXTURE_STACK_PACK,
+      kind: "stack",
+      version: "1.0.0",
+      tier: 1,
+      source: "builtin",
+      detect: [{ file: "svc.json" }],
+      component_dir: componentDir,
+      workdir: componentDir,
+      implements: ["EEP-DEVX-01"],
+      authors: [{ name: "EEP Fixture", github: "@fixture" }],
+      maintainers: ["@fixture"],
+    }),
+  );
+  writeFile(
+    corpus,
+    join(packDir, "checks", "manifest.yaml"),
+    stringifyYaml({
+      checks: [
+        {
+          law: "EEP-DEVX-01",
+          kind: "builtin",
+          command: "file-contains Makefile setup",
+          proves: "One command setup entry point exists.",
+        },
+      ],
+    }),
+  );
+  writeFile(corpus, join(packDir, "STACK.md"), "# svcfixture golden path\n\nOne make target.\n");
+  writeFile(corpus, join(packDir, "README.md"), "# svcfixture\n\nA fixture pack.\n");
+  writeFile(corpus, join(packDir, "bindings", "EEP-DEVX-01.md"), "# Binding\n\nmake setup.\n");
+  writeFile(
+    corpus,
+    join(packDir, "scaffold", "Makefile"),
+    ".PHONY: setup test verify\nsetup:\n\t@echo setup {{project_name}}\ntest:\n\t@echo test\nverify:\n\t@echo verify\n",
+  );
+  writeFile(corpus, join(packDir, "scaffold", "README.md"), "# {{project_name}} service\n");
+  // .eep/cache/ is deliberately shared with the python-fastapi scaffold's ignore list: the root
+  // file is a union, and a duplicated entry there would be the first sign it is a concatenation.
+  writeFile(corpus, join(packDir, "scaffold", ".gitignore"), "node_modules/\n.eep/cache/\n");
+}
+
+function writeFixtureDeliveryPack(corpus: string): void {
+  const packDir = join("packs", "delivery", FIXTURE_DELIVERY_PACK);
+  writeFile(
+    corpus,
+    join(packDir, "pack.yaml"),
+    stringifyYaml({
+      name: FIXTURE_DELIVERY_PACK,
+      kind: "delivery",
+      version: "1.0.0",
+      tier: 1,
+      source: "builtin",
+      detect: [{ file: ".github/workflows" }],
+      implements: ["EEP-DLV-01"],
+      authors: [{ name: "EEP Fixture", github: "@fixture" }],
+      maintainers: ["@fixture"],
+    }),
+  );
+  writeFile(
+    corpus,
+    join(packDir, "checks", "manifest.yaml"),
+    stringifyYaml({
+      checks: [
+        {
+          law: "EEP-DLV-01",
+          kind: "builtin",
+          command: "file-contains-any .github/workflows 'eep verify'",
+          proves: "CI runs the gate.",
+        },
+      ],
+    }),
+  );
+  writeFile(corpus, join(packDir, "STACK.md"), "# deliveryfixture golden path\n\nOne workflow.\n");
+  writeFile(corpus, join(packDir, "README.md"), "# deliveryfixture\n\nA fixture pack.\n");
+  writeFile(corpus, join(packDir, "bindings", "EEP-DLV-01.md"), "# Binding\n\nThe workflow.\n");
+  writeFile(
+    corpus,
+    join(packDir, "scaffold", ".github", "workflows", "ci.yml"),
+    "name: ci\njobs:\n  gate:\n    steps:\n      - run: eep verify\n",
+  );
+}
+
+function newComposedCorpus(componentDir = "svc"): string {
+  const corpus = newTargetDir("eep-init-composed-corpus-");
+  cpSync(join(corpusDir, "CONSTITUTION.md"), join(corpus, "CONSTITUTION.md"));
+  for (const rel of ["schemas", "profiles", "doctrine", join("packs", "stack", "python-fastapi")]) {
+    cpSync(join(corpusDir, rel), join(corpus, rel), { recursive: true });
+  }
+  writeFixtureStackPack(corpus, componentDir);
+  writeFixtureDeliveryPack(corpus);
+  return corpus;
+}
+
+function lockPackNames(projectDir: string): string[] {
+  const parsed: unknown = parseYaml(readFileSync(join(projectDir, ".eep", "lock.yaml"), "utf8"));
+  const packs = (parsed as { packs?: { name?: string }[] }).packs ?? [];
+  return packs.map((entry) => entry.name ?? "");
+}
+
+describe("runInit composing several packs", () => {
+  it("renders one component per stack pack and a root that drives them", async () => {
+    const targetDir = newTargetDir("eep-init-composed-");
+    const corpus = newComposedCorpus();
+
+    await runInit({
+      name: "shop",
+      targetDir,
+      corpusDir: corpus,
+      tokens: ["fastapi", FIXTURE_STACK_PACK],
+      installOffer: false,
+    });
+
+    const projectDir = join(targetDir, "shop");
+    expect(existsSync(join(projectDir, "backend", "pyproject.toml"))).toBe(true);
+    expect(existsSync(join(projectDir, "backend", "app", "main.py"))).toBe(true);
+    expect(existsSync(join(projectDir, "svc", "Makefile"))).toBe(true);
+    // Nothing from either component leaked into the root.
+    expect(existsSync(join(projectDir, "pyproject.toml"))).toBe(false);
+
+    // The name substitution runs inside every component, not only the first.
+    expect(readFileSync(join(projectDir, "backend", "pyproject.toml"), "utf8")).toContain(
+      'name = "shop"',
+    );
+    expect(readFileSync(join(projectDir, "svc", "Makefile"), "utf8")).toContain("setup shop");
+  });
+
+  it("writes a root Makefile that fans every target into both components", async () => {
+    const targetDir = newTargetDir("eep-init-composed-make-");
+    const corpus = newComposedCorpus();
+
+    await runInit({
+      name: "shop",
+      targetDir,
+      corpusDir: corpus,
+      tokens: [FIXTURE_STACK_PACK, "fastapi"],
+      installOffer: false,
+    });
+
+    const makefile = readFileSync(join(targetDir, "shop", "Makefile"), "utf8");
+
+    expect(makefile).toContain("COMPONENTS = backend svc");
+    for (const target of ["setup:", "test:", "verify:"]) {
+      expect(makefile).toContain(target);
+    }
+    expect(makefile).toContain("$(MAKE) -C $$c setup");
+    expect(makefile).toContain("$(MAKE) -C $$c test");
+    expect(makefile).toContain("$(MAKE) -C $$c verify");
+    // The root gate runs after the components, in the form the reader's shell can answer.
+    expect(makefile).toContain("if command -v eep >/dev/null 2>&1; then eep verify; \\");
+    expect(makefile).toContain("else npx -y engineering-excellence verify; fi");
+  });
+
+  it("writes a root README naming the project, its components, and the generated instructions", async () => {
+    const targetDir = newTargetDir("eep-init-composed-readme-");
+    const corpus = newComposedCorpus();
+
+    await runInit({
+      name: "shop",
+      targetDir,
+      corpusDir: corpus,
+      tokens: ["fastapi", FIXTURE_STACK_PACK],
+      installOffer: false,
+    });
+
+    const readme = readFileSync(join(targetDir, "shop", "README.md"), "utf8");
+
+    expect(readme).toContain("# shop");
+    expect(readme).toContain("`backend`: python-fastapi");
+    expect(readme).toContain(`\`svc\`: ${FIXTURE_STACK_PACK}`);
+    expect(readme).toContain("make setup");
+    expect(readme).toContain("make test");
+    expect(readme).toContain("make verify");
+    expect(readme).toContain("CLAUDE.md");
+  });
+
+  it("unions the components' ignore entries at the root, without duplicating a shared one", async () => {
+    const targetDir = newTargetDir("eep-init-composed-ignore-");
+    const corpus = newComposedCorpus();
+
+    await runInit({
+      name: "shop",
+      targetDir,
+      corpusDir: corpus,
+      tokens: ["fastapi", FIXTURE_STACK_PACK],
+      installOffer: false,
+    });
+
+    const lines = readFileSync(join(targetDir, "shop", ".gitignore"), "utf8")
+      .split("\n")
+      .filter((line) => line !== "");
+
+    expect(lines).toContain(".venv/");
+    expect(lines).toContain("node_modules/");
+    expect(lines.filter((line) => line === ".eep/cache/")).toHaveLength(1);
+  });
+
+  it("vendors every composed pack into one .eep, one eep.yaml, and one set of agent files", async () => {
+    const targetDir = newTargetDir("eep-init-composed-sync-");
+    const corpus = newComposedCorpus();
+
+    await runInit({
+      name: "shop",
+      targetDir,
+      corpusDir: corpus,
+      tokens: ["fastapi", FIXTURE_STACK_PACK],
+      installOffer: false,
+    });
+
+    const projectDir = join(targetDir, "shop");
+    expect(lockPackNames(projectDir).sort()).toEqual(["python-fastapi", FIXTURE_STACK_PACK].sort());
+    expect(readFileSync(join(projectDir, "eep.yaml"), "utf8")).toContain(FIXTURE_STACK_PACK);
+    expect(existsSync(join(projectDir, "backend", ".eep"))).toBe(false);
+
+    // The law table is the whole point of composing: both packs' laws, each attributed.
+    const agents = readFileSync(join(projectDir, "AGENTS.md"), "utf8");
+    expect(agents).toContain("| Law | Pack | Title | Severity | Check |");
+    expect(agents).toContain("| EEP-TEST-03 | python-fastapi |");
+    expect(agents).toContain(`| EEP-DEVX-01 | ${FIXTURE_STACK_PACK} |`);
+    expect(agents).toContain("| EEP-DEVX-01 | python-fastapi |");
+    expect(readFileSync(join(projectDir, "CLAUDE.md"), "utf8")).toEqual(agents);
+  });
+
+  it("initializes exactly one git repository, at the root, with one commit", async () => {
+    const targetDir = newTargetDir("eep-init-composed-git-");
+    const corpus = newComposedCorpus();
+
+    await runInit({
+      name: "shop",
+      targetDir,
+      corpusDir: corpus,
+      tokens: ["fastapi", FIXTURE_STACK_PACK],
+      installOffer: false,
+    });
+
+    const projectDir = join(targetDir, "shop");
+    expect(existsSync(join(projectDir, ".git"))).toBe(true);
+    expect(existsSync(join(projectDir, "backend", ".git"))).toBe(false);
+    expect(existsSync(join(projectDir, "svc", ".git"))).toBe(false);
+    expect(existsSync(join(projectDir, ".git", "hooks", "pre-commit"))).toBe(true);
+
+    const log = await execa("git", ["log", "--oneline"], { cwd: projectDir });
+    expect(log.stdout.trim().split("\n")).toHaveLength(1);
+  });
+
+  it("renders a delivery pack that claims no component directory at the repository root", async () => {
+    const targetDir = newTargetDir("eep-init-composed-delivery-");
+    const corpus = newComposedCorpus();
+
+    await runInit({
+      name: "shop",
+      targetDir,
+      corpusDir: corpus,
+      tokens: ["fastapi", FIXTURE_DELIVERY_PACK],
+      installOffer: false,
+    });
+
+    const projectDir = join(targetDir, "shop");
+    expect(existsSync(join(projectDir, ".github", "workflows", "ci.yml"))).toBe(true);
+    expect(existsSync(join(projectDir, "backend", "pyproject.toml"))).toBe(true);
+    expect(lockPackNames(projectDir)).toContain(FIXTURE_DELIVERY_PACK);
+  });
+
+  it("reports a token whose pack is not built yet and composes the rest", async () => {
+    const targetDir = newTargetDir("eep-init-composed-soon-");
+    const corpus = newComposedCorpus();
+
+    const output = await captureLog(async () => {
+      await runInit({
+        name: "shop",
+        targetDir,
+        corpusDir: corpus,
+        tokens: ["fastapi", "angular", FIXTURE_STACK_PACK],
+        installOffer: false,
+      });
+    });
+
+    expect(output).toContain("eep init: coming soon, skipped: angular");
+    expect(existsSync(join(targetDir, "shop", "svc", "Makefile"))).toBe(true);
+  });
+
+  it("aborts on an unknown token before creating the project directory", async () => {
+    const targetDir = newTargetDir("eep-init-composed-unknown-");
+    const corpus = newComposedCorpus();
+
+    await expect(
+      runInit({
+        name: "shop",
+        targetDir,
+        corpusDir: corpus,
+        tokens: ["fastapi", "cobol"],
+        installOffer: false,
+      }),
+    ).rejects.toThrow("unknown framework: cobol");
+
+    expect(existsSync(join(targetDir, "shop"))).toBe(false);
+  });
+
+  it("refuses two packs that claim the same component directory, before writing anything", async () => {
+    const targetDir = newTargetDir("eep-init-composed-collision-");
+    const corpus = newComposedCorpus("backend");
+
+    await expect(
+      runInit({
+        name: "shop",
+        targetDir,
+        corpusDir: corpus,
+        tokens: ["fastapi", FIXTURE_STACK_PACK],
+        installOffer: false,
+      }),
+    ).rejects.toThrow("both claim component directory backend");
+
+    expect(existsSync(join(targetDir, "shop"))).toBe(false);
+  });
+
+  it("refuses a selection whose every token is still on the roadmap", async () => {
+    const targetDir = newTargetDir("eep-init-composed-allsoon-");
+    const corpus = newComposedCorpus();
+
+    await expect(
+      runInit({
+        name: "shop",
+        targetDir,
+        corpusDir: corpus,
+        tokens: ["angular", "go"],
+        installOffer: false,
+      }),
+    ).rejects.toThrow("nothing to compose; no requested framework has a pack yet");
+
+    expect(existsSync(join(targetDir, "shop"))).toBe(false);
+  });
+
+  it("refuses a selection with no stack pack in it", async () => {
+    const targetDir = newTargetDir("eep-init-composed-nostack-");
+    const corpus = newComposedCorpus();
+
+    await expect(
+      runInit({
+        name: "shop",
+        targetDir,
+        corpusDir: corpus,
+        tokens: [FIXTURE_DELIVERY_PACK],
+        installOffer: false,
+      }),
+    ).rejects.toThrow("at least one stack pack");
+
+    expect(existsSync(join(targetDir, "shop"))).toBe(false);
+  });
+
+  it("names the same next steps a single pack init does", async () => {
+    const targetDir = newTargetDir("eep-init-composed-steps-");
+    const corpus = newComposedCorpus();
+
+    const output = await withPath(pathWithoutEep(), () =>
+      captureLog(async () => {
+        await runInit({
+          name: "shop",
+          targetDir,
+          corpusDir: corpus,
+          tokens: ["fastapi", FIXTURE_STACK_PACK],
+          installOffer: false,
+        });
+      }),
+    );
+
+    expect(output).toContain("eep init: next steps: cd shop && make setup && make test");
+    expect(output).toContain(
+      "eep init: full gate: npx engineering-excellence verify from the project",
+    );
   });
 });
