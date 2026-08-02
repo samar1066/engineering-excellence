@@ -1,0 +1,61 @@
+name: Pack request
+description: Ask for a framework or platform to get an Engineering Excellence pack
+labels: ["pack-request"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A pack is one directory under `packs/`, holding a golden path an agent
+        reads, a blessed toolchain with its configs, a scaffold, and one
+        executable check per law it implements. Tell us what should exist and
+        why. The best requests read like the first draft of the pack README.
+  - type: input
+    id: framework
+    attributes:
+      label: Framework or platform name
+      description: The name as its own community writes it, plus the major version you have in mind.
+      placeholder: Django 5
+    validations:
+      required: true
+  - type: textarea
+    id: rationale
+    attributes:
+      label: Why it belongs
+      description: Who is blocked without this pack, and what it would let an agent do that it cannot do today. Say what makes this stack different enough to need its own laws bound to it, rather than an existing pack stretched to cover it.
+      placeholder: |
+        Who needs it:
+        What an agent gets wrong today without it:
+        What makes it distinct from the packs that already exist:
+    validations:
+      required: false
+  - type: textarea
+    id: toolchain
+    attributes:
+      label: The blessed toolchain you would propose
+      description: One tool per category with a one line reason, and a config file where the tool is configurable. Categories are package manager, formatter, linter, type checker, unit test, integration test, api test, e2e test, coverage, mocking, logging, tracing. Decline any category that does not apply and say why. Silence on a category is a validation failure in the pack itself, so it is worth settling here.
+      placeholder: |
+        package manager:
+        formatter:
+        linter:
+        type checker:
+        unit test:
+        integration test:
+        api test:
+        e2e test:
+        coverage:
+        mocking:
+        logging:
+        tracing:
+    validations:
+      required: false
+  - type: dropdown
+    id: volunteer
+    attributes:
+      label: Are you volunteering to author it
+      description: Authoring a pack earns merge rights on that directory. No is a perfectly good answer, and the request still counts.
+      options:
+        - "Yes"
+        - "No"
+        - "With help"
+    validations:
+      required: true

@@ -1,0 +1,55 @@
+name: Bug report
+description: Report the CLI, a pack, or a generated file behaving wrong
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A report we can reproduce gets fixed. A report we have to guess at gets
+        questions. If the problem is a security issue that someone could
+        exploit, stop here and follow SECURITY.md instead of filing publicly.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: >-
+        Describe the behavior and the repository it happened in, including the
+        frameworks in play, whether it was a fresh project or an existing one,
+        and anything unusual about the layout. Paste the output, including any
+        law ID and file path the failure named.
+    validations:
+      required: true
+  - type: input
+    id: command
+    attributes:
+      label: The exact command
+      description: The full command line you ran, flags included, copied rather than retyped.
+      placeholder: npx engineering-excellence verify --changed
+    validations:
+      required: false
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected vs actual
+      description: What you expected the command to do, and what it did instead. If a check failed that you believe should have passed, say which law and why your code satisfies it.
+      placeholder: |
+        Expected:
+        Actual:
+    validations:
+      required: false
+  - type: input
+    id: version
+    attributes:
+      label: eep version
+      description: The output of `eep --version`, or of `npx engineering-excellence --version` if you have no global install.
+      placeholder: 0.2.2
+    validations:
+      required: false
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      description: Name and version, plus your Node version if you have it to hand.
+      placeholder: macOS 15.2, Node 22.13
+    validations:
+      required: false

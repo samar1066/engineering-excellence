@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: The published package
+    url: https://www.npmjs.com/package/engineering-excellence
+    about: Version history, install instructions, and the current release of engineering-excellence on npm.
