@@ -1,17 +1,32 @@
 import { App } from "aws-cdk-lib";
 import { Match, Template } from "aws-cdk-lib/assertions";
 import { describe, expect, it } from "vitest";
-import { environments, type Stage, stackName, stages } from "../lib/environments";
+import {
+  DEFAULT_CONTAINER_PORT,
+  DEFAULT_HEALTH_CHECK_PATH,
+  type EnvironmentConfig,
+  environments,
+  type Stage,
+  stackName,
+  stages,
+} from "../lib/environments";
 import { ServiceStack, UNDEPLOYABLE_IMAGE_TAG } from "../lib/service-stack";
 
 /**
- * Synthesizes one stage into a CloudFormation template, the same way `npm run synth` does, with no
+ * Synthesizes one config into a CloudFormation template, the same way `npm run synth` does, with no
  * AWS credentials and no account lookup involved.
  */
-function synth(stage: Stage, context: Record<string, unknown> = {}): Template {
+function synthConfig(
+  id: string,
+  config: EnvironmentConfig,
+  context: Record<string, unknown> = {},
+): Template {
   const app = new App({ context });
-  const stack = new ServiceStack(app, stackName("proof", stage), { config: environments[stage] });
-  return Template.fromStack(stack);
+  return Template.fromStack(new ServiceStack(app, id, { config }));
+}
+
+function synth(stage: Stage, context: Record<string, unknown> = {}): Template {
+  return synthConfig(stackName("proof", stage), environments[stage], context);
 }
 
 function desiredCountOf(stage: Stage): number {
@@ -55,10 +70,26 @@ describe.each(stages)("the %s stage", (stage) => {
     });
   });
 
-  it("health checks the service on /health", () => {
+  it("health checks the service on the default path", () => {
     synth(stage).hasResourceProperties("AWS::ElasticLoadBalancingV2::TargetGroup", {
-      HealthCheckPath: "/health",
+      HealthCheckPath: DEFAULT_HEALTH_CHECK_PATH,
       Matcher: { HttpCode: "200" },
+    });
+  });
+
+  it("maps the default container port", () => {
+    const template = synth(stage);
+    template.hasResourceProperties("AWS::ECS::TaskDefinition", {
+      ContainerDefinitions: Match.arrayWith([
+        Match.objectLike({
+          PortMappings: Match.arrayWith([
+            Match.objectLike({ ContainerPort: DEFAULT_CONTAINER_PORT }),
+          ]),
+        }),
+      ]),
+    });
+    template.hasResourceProperties("AWS::ECS::Service", {
+      LoadBalancers: Match.arrayWith([Match.objectLike({ ContainerPort: DEFAULT_CONTAINER_PORT })]),
     });
   });
 
@@ -107,6 +138,36 @@ describe("the stage table", () => {
         ]),
       });
     }
+  });
+});
+
+describe("the container contract", () => {
+  // The defaults fit the api component this stack ships for. A stage that runs some other image
+  // says so in the stage table, and nothing in service-stack.ts changes, which is what keeps a
+  // second service a table entry rather than a fork of the stack.
+  it("synthesizes a stage that overrides the port and the health check path", () => {
+    const config: EnvironmentConfig = {
+      ...environments.dev,
+      containerPort: 8080,
+      healthCheckPath: "/",
+    };
+    const template = synthConfig("proof-override", config);
+
+    template.hasResourceProperties("AWS::ECS::TaskDefinition", {
+      ContainerDefinitions: Match.arrayWith([
+        Match.objectLike({
+          PortMappings: Match.arrayWith([Match.objectLike({ ContainerPort: 8080 })]),
+        }),
+      ]),
+    });
+    // The load balancer listens on 80 whatever the container does, so the container port shows up
+    // on the service's target registration rather than on the target group.
+    template.hasResourceProperties("AWS::ECS::Service", {
+      LoadBalancers: Match.arrayWith([Match.objectLike({ ContainerPort: 8080 })]),
+    });
+    template.hasResourceProperties("AWS::ElasticLoadBalancingV2::TargetGroup", {
+      HealthCheckPath: "/",
+    });
   });
 });
 

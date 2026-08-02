@@ -15,7 +15,7 @@ updated: 2026-08-02
 
 This is the golden path for the infrastructure of a project built from the aws-cdk pack: read it before changing anything under `infra/`. It is written for the AI coding agent or engineer who has just opened the repository and needs to know where a resource goes, how a stage is added, what a deploy actually promotes, and what the verification gate will demand. Every path and command below exists in this pack's scaffold, so copy working patterns from it instead of inventing new ones.
 
-The pack deploys one containerized service to AWS Fargate behind an application load balancer, in three stages. It is deliberately one service and three stages rather than a general purpose landing zone: an infrastructure definition earns its keep by being small enough that a reader can hold all of it at once, and everything else this program needs, the image itself and the pipeline that promotes it, belongs to the container and delivery packs.
+The shipped stack deploys one component, the backend api, to AWS Fargate behind an application load balancer, in three stages, and its container port and health check path default to that component's. The containers pack also builds frontend and node service images, and deploying those as additional Fargate services is a documented later revision of this stack rather than something it does today. It is deliberately one service and three stages rather than a general purpose landing zone: an infrastructure definition earns its keep by being small enough that a reader can hold all of it at once, and everything else this program needs, the image itself and the pipeline that promotes it, belongs to the container and delivery packs.
 
 ## Project shape
 
@@ -49,6 +49,8 @@ Two rules keep that shape. Nothing under `lib/` reads an environment variable or
 
 Each entry becomes one CloudFormation stack named `<project>-<stage>`, holding its own VPC, cluster, service, load balancer, log group, and security groups. Nothing is shared across stages, so a change to uat cannot reach prod through a resource they both use.
 
+Two further fields are optional, and both describe the image a stage runs rather than its scale: `containerPort` defaults to `DEFAULT_CONTAINER_PORT` (8000, the backend packs' port) and `healthCheckPath` defaults to `DEFAULT_HEALTH_CHECK_PATH` (`/health`, the endpoint they serve). A stage that runs some other image sets both in the table, for example `containerPort: 8080` with `healthCheckPath: "/"` for a static frontend image, and `service-stack.ts` is not touched.
+
 Production behavior hangs off the `isProduction` flag rather than off a comparison against the string `prod`, so renaming a stage cannot silently grant it production behavior or take it away. Today that flag decides four things: whether tasks run in private subnets behind NAT gateways, whether the load balancer carries deletion protection, how long logs are retained and whether the log group survives a stack deletion, and whether a rolling deployment is allowed to dip below full capacity.
 
 Accounts and regions are absent from the table on purpose. They bind at deploy time from the standard `CDK_DEFAULT_ACCOUNT` and `CDK_DEFAULT_REGION` variables, which the CDK CLI exports from whichever credentials the deploy runs under. Three consequences follow, and all three are the point:
@@ -69,7 +71,7 @@ Adding a stage is one entry in the table plus one deploy. Never copy `service-st
 2. An ECS `Cluster` on that VPC with Container Insights enabled in every stage, on the principle that a metric which only exists in production is a metric nobody has read before the incident that needs it.
 3. A `LogGroup` whose retention and removal policy come from the stage: three months and retain in production, one week and destroy elsewhere.
 4. An `ApplicationLoadBalancedFargateService` sized from the stage table, with the deployment circuit breaker enabled and rollback on, a health check grace period, and the log driver pointed at the log group above. The image is `ecs.ContainerImage.fromRegistry` over the placeholder repository named at the top of the file, tagged by the context parameter described in the next section.
-5. A health check on the target group against `/health`, the endpoint every backend pack in this program serves, so the load balancer decides a task is alive the same way an operator would.
+5. A health check on the target group against the stage's health check path, `/health` by default, the endpoint every backend pack in this program serves, so the load balancer decides a task is alive the same way an operator would.
 6. Deletion protection on the production load balancer only, because it is the resource holding the DNS name every client resolves.
 7. `Project` and `Stage` tags across the stack, which is what makes a bill splittable by stage, and two outputs: the service URL and the image tag the stage was synthesized with.
 
@@ -77,7 +79,7 @@ The image repository is a placeholder. The first time this stack is deployed aga
 
 ## The promotion contract
 
-The image tag is the artifact reference, and it arrives as a CDK context parameter rather than as a value in this repository:
+The image tag is the artifact reference, and it arrives as a CDK context parameter rather than as a value in this repository. `{{project_name}}` below stands for the normalized project name, which the next subsection defines:
 
 ```
 npx cdk deploy {{project_name}}-dev  --context imageTag=<sha>
@@ -89,7 +91,11 @@ The same `<sha>` runs in all three commands. That is the entire promotion contra
 
 Two details make the contract hard to break by accident. First, when no `imageTag` is supplied the stack falls back to `UNDEPLOYABLE_IMAGE_TAG`, a tag no build ever pushes, so a deploy that forgot the parameter fails at the registry pull instead of quietly rolling a stage back to whatever `latest` happened to point at. Second, the tag is echoed as a stack output and as an `IMAGE_TAG` environment variable on the container, so what is running in a stage can be read from the stack rather than inferred from a pipeline log.
 
-Stack names carry the project name, normalized: CloudFormation accepts letters, digits, and hyphens only, so an underscore in a project name becomes a hyphen in `stackName`. A project called `my_shop` deploys `my-shop-dev`, `my-shop-uat`, and `my-shop-prod`.
+### The stack naming contract
+
+The deployed stack name is the normalized project name suffixed by the stage. Normalized means every character CloudFormation rejects in a stack name becomes a hyphen, and in practice that is the underscore, which `eep init` accepts in a project name and CloudFormation does not. A project called `shop_api` therefore deploys `shop-api-dev`, `shop-api-uat`, and `shop-api-prod`.
+
+This is a cross pack contract, not an implementation detail of `stackName` in `lib/environments.ts`. The delivery pack derives the same normalized prefix when it builds the deploy command for each stage, so a pipeline and this repository name the same stack. Anything that constructs a stack name, a workflow step, a console link, an alarm, must apply the same normalization rather than interpolating the raw project name.
 
 ## Diff before deploy
 
@@ -98,6 +104,8 @@ A deploy is the one command in this repository that can destroy something no tes
 ```
 npm run diff -- {{project_name}}-prod --context imageTag=<sha>
 ```
+
+The stack argument is the normalized name again, so a project called `shop_api` previews `shop-api-prod`.
 
 Read the output rather than skimming it. Three things are worth stopping for: a resource marked for replacement, which means the existing one is destroyed and recreated; any change to a security group ingress rule; and any change to the load balancer or its listener, since that is the DNS name clients hold. A diff with the tag the deploy will actually use is the only diff worth reading, because the container image line is usually the change you intend and everything else on the list is the change you did not.
 

@@ -14,6 +14,15 @@
 
 export type Stage = "dev" | "uat" | "prod";
 
+/**
+ * The port the container listens on when a stage does not say otherwise. It is the backend packs'
+ * service port, because the api component is what this stack deploys.
+ */
+export const DEFAULT_CONTAINER_PORT = 8000;
+
+/** The path the load balancer health checks when a stage does not say otherwise. */
+export const DEFAULT_HEALTH_CHECK_PATH = "/health";
+
 export interface EnvironmentConfig {
   /** The stage name. It prefixes nothing on its own: stackName below builds the stack name. */
   readonly stage: Stage;
@@ -25,6 +34,16 @@ export interface EnvironmentConfig {
   readonly cpu: number;
   /** Task memory in MiB. Fargate accepts a fixed set of pairs with cpu. */
   readonly memoryLimitMiB: number;
+  /**
+   * Port the container listens on. Omitted means DEFAULT_CONTAINER_PORT. Set it when the image this
+   * stage runs listens somewhere else, for example a static frontend image on 8080.
+   */
+  readonly containerPort?: number;
+  /**
+   * Path the target group health checks. Omitted means DEFAULT_HEALTH_CHECK_PATH. Set it when the
+   * image this stage runs has no /health endpoint, for example a frontend serving "/".
+   */
+  readonly healthCheckPath?: string;
 }
 
 export const environments: Record<Stage, EnvironmentConfig> = {

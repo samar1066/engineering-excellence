@@ -4,7 +4,11 @@ import * as ecs from "aws-cdk-lib/aws-ecs";
 import * as ecsPatterns from "aws-cdk-lib/aws-ecs-patterns";
 import * as logs from "aws-cdk-lib/aws-logs";
 import type { Construct } from "constructs";
-import type { EnvironmentConfig } from "./environments";
+import {
+  DEFAULT_CONTAINER_PORT,
+  DEFAULT_HEALTH_CHECK_PATH,
+  type EnvironmentConfig,
+} from "./environments";
 
 /**
  * The container image repository this service runs. It is a placeholder: replace it with the real
@@ -27,9 +31,6 @@ export const IMAGE_TAG_CONTEXT_KEY = "imageTag";
  */
 export const UNDEPLOYABLE_IMAGE_TAG = "no-image-tag-supplied-do-not-deploy";
 
-/** The port the container listens on, matching the backend packs' service default. */
-const CONTAINER_PORT = 8000;
-
 export interface ServiceStackProps extends StackProps {
   readonly config: EnvironmentConfig;
 }
@@ -50,6 +51,11 @@ export class ServiceStack extends Stack {
     const { config } = props;
     const isProduction = config.isProduction;
     const imageTag = this.resolveImageTag();
+    // The image this stack runs is the api component's, so the defaults are the backend packs'
+    // port and health endpoint. A stage that runs a different image (a frontend on 8080 serving
+    // "/", say) overrides both in the stage table rather than editing this file.
+    const containerPort = config.containerPort ?? DEFAULT_CONTAINER_PORT;
+    const healthCheckPath = config.healthCheckPath ?? DEFAULT_HEALTH_CHECK_PATH;
 
     // Two availability zones: the minimum that survives one zone failing, and the maximum an
     // account agnostic stack can name without looking an account up. Non production runs with no
@@ -102,7 +108,7 @@ export class ServiceStack extends Stack {
       healthCheckGracePeriod: Duration.seconds(60),
       taskImageOptions: {
         image: ecs.ContainerImage.fromRegistry(`${IMAGE_REPOSITORY}:${imageTag}`),
-        containerPort: CONTAINER_PORT,
+        containerPort,
         logDriver: ecs.LogDrivers.awsLogs({ streamPrefix: config.stage, logGroup }),
         environment: {
           STAGE: config.stage,
@@ -114,7 +120,7 @@ export class ServiceStack extends Stack {
     // The load balancer decides a task is alive the same way an operator would: by asking the
     // service's own health endpoint, which every backend pack in this program serves.
     this.service.targetGroup.configureHealthCheck({
-      path: "/health",
+      path: healthCheckPath,
       healthyHttpCodes: "200",
       interval: Duration.seconds(30),
       timeout: Duration.seconds(5),
