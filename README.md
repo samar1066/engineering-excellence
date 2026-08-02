@@ -50,25 +50,43 @@ Naming no framework (`npx engineering-excellence init shop`) keeps that single a
 
 ## What we support
 
-| Framework or platform | Token | Status |
+**Backend**
+
+| Framework | Token | Status |
 |---|---|---|
+| C++ | `cpp` | In development |
 | FastAPI (Python) | `fastapi` | Available |
-| Node and TypeScript services | `node` | Available |
-| React | `react` | Available |
-| Angular | `angular` | In development |
-| React Native | `react-native` | In development |
+| Go | `go` | In development |
 | Java Spring | `java` | In development |
 | .NET ASP.NET | `dotnet` | In development |
-| Go | `go` | In development |
-| C++ | `cpp` | In development |
+| Node and TypeScript services | `node` | Available |
 | SQL and Postgres | `sql` | In development |
-| AWS serverless | `aws` | Available |
+
+**Frontend**
+
+| Framework | Token | Status |
+|---|---|---|
+| Angular | `angular` | In development |
+| React | `react` | Available |
+| React Native | `react-native` | In development |
+
+**Infrastructure and containers**
+
+| Platform | Token | Status |
+|---|---|---|
 | AWS CDK Fargate | `cdk` | Available |
-| Terraform | `terraform` | In development |
+| AWS serverless | `aws` | Available |
 | Containers and Kubernetes | `docker` or `k8s` | Available |
 | Power Platform | `power-platform` | In development |
-| GitHub Actions delivery | `github-actions` | Available |
-| Azure DevOps, GitLab CI | `azure-devops`, `gitlab` | In development |
+| Terraform | `terraform` | In development |
+
+**Delivery and CI**
+
+| Platform | Token | Status |
+|---|---|---|
+| Azure DevOps | `azure-devops` | In development |
+| GitHub Actions | `github-actions` | Available |
+| GitLab CI | `gitlab` | In development |
 
 The list grows without redesign: every framework is a pack held to one
 executable contract, and the CLI discovers packs at runtime, so a new
