@@ -185,8 +185,8 @@ describe("capabilityScreenLines", () => {
     expect(screen).toContain("fastapi (python-fastapi)");
     expect(screen).toContain("In development:");
     expect(screen).toContain("node");
-    expect(screen).toContain("npx eep-cli fastapi");
-    expect(screen).toContain("npx eep-cli fastapi node angular");
+    expect(screen).toContain("npx engineering-excellence fastapi");
+    expect(screen).toContain("npx engineering-excellence fastapi node angular");
     expect(screen).not.toContain("Detected in this project");
   });
 
@@ -196,6 +196,8 @@ describe("capabilityScreenLines", () => {
 
     const screen = capabilityScreenLines(corpusDir, targetDir).join("\n");
 
-    expect(screen).toContain("Detected in this project: fastapi. Run: npx eep-cli fastapi");
+    expect(screen).toContain(
+      "Detected in this project: fastapi. Run: npx engineering-excellence fastapi",
+    );
   });
 });

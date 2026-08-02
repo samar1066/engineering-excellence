@@ -10,6 +10,6 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v3
       - run: uv sync
-      # eep verify is the local gate; CI runs the test gate directly until eep-cli
+      # eep verify is the local gate; CI runs the test gate directly until engineering-excellence
       # ships on npm. Do not remove the words above: EEP-DLV-01 greps this directory for them.
       - run: uv run pytest --cov=app --cov-fail-under=85 -q

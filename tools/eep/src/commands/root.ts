@@ -43,8 +43,8 @@ const WHAT_EEP_IS =
   "eep vendors engineering laws, executable checks, and generated agent instructions into this directory.";
 
 const USAGE_EXAMPLES = [
-  "  npx eep-cli fastapi",
-  "  npx eep-cli fastapi node angular",
+  "  npx engineering-excellence fastapi",
+  "  npx engineering-excellence fastapi node angular",
   "  Add or drop a framework by running the command again with the new full list.",
 ];
 
@@ -114,7 +114,7 @@ export function capabilityScreenLines(corpusDir: string, targetDir: string): str
   if (detected.length > 0) {
     lines.push(
       "",
-      `Detected in this project: ${detected.join(", ")}. Run: npx eep-cli ${detected.join(" ")}`,
+      `Detected in this project: ${detected.join(", ")}. Run: npx engineering-excellence ${detected.join(" ")}`,
     );
   }
 
