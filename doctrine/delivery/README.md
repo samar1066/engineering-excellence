@@ -6,7 +6,7 @@ authors:
   - { name: Samar Swami, github: "@samar1066" }
 maintainers: ["@samar1066"]
 created: 2026-08-01
-updated: 2026-08-01
+updated: 2026-08-02
 ---
 
 # Delivery
@@ -15,18 +15,21 @@ This folder holds the laws that govern how a change moves from a contributor's m
 
 ## Overview
 
-Delivery law covers how a codebase moves from a proposed change to something everyone can rely on, starting with the two guarantees that make every later stage trustworthy: that nothing merges unverified, and that a build resolves the same dependencies today that it resolved yesterday. An unverified merge is a bet that compounds with every change layered on top of it, and an unpinned dependency graph turns a build into something that cannot reliably be reproduced. This domain currently holds the foundational laws for both guarantees: continuous integration as a mandatory gate, and a lockfile kept in sync with what a project declares.
+Delivery law covers how a codebase moves from a proposed change to something everyone can rely on, starting with the two guarantees that make every later stage trustworthy: that nothing merges unverified, and that a build resolves the same dependencies today that it resolved yesterday. An unverified merge is a bet that compounds with every change layered on top of it, and an unpinned dependency graph turns a build into something that cannot reliably be reproduced. This domain holds the foundational laws for both guarantees: continuous integration as a mandatory gate, and a lockfile kept in sync with what a project declares. It then follows the verified artifact outward, requiring that one build promotes through a non production environment before production and that those two environments stay genuinely separate.
 
 ## Contents
 
 <!-- eep:index -->
 - EEP-DLV-01: Continuous integration gates every change.
 - EEP-DLV-02: Dependencies are pinned by a lockfile that stays fresh.
+- EEP-DLV-03: One built artifact promotes through non production before production.
+- EEP-DLV-04: Production and non production run as separate environments.
 <!-- /eep:index -->
 
 ## Related
 
 EEP-TEST-01: the test suite that the continuous integration gate in this domain is required to run on every change.
+EEP-IAC-01, EEP-IAC-02: the infrastructure and image definitions that the artifact governed here is promoted onto.
 
 ---
-*Authored by Samar Swami (@samar1066) · Maintained by @samar1066 · v1.0.0 · Last reviewed 2026-08-01*
+*Authored by Samar Swami (@samar1066) · Maintained by @samar1066 · v1.0.0 · Last reviewed 2026-08-02*
