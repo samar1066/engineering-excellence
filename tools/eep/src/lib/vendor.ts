@@ -26,7 +26,10 @@ const SCAFFOLD_DIR_NAME = "scaffold";
 // the exact document the consumer had (comments, ordering, and trailing whitespace included).
 const WAIVERS_FILE_NAME = "waivers.yaml";
 
-type LockPack = { name: string; version: string };
+// `workdir` is the pinned, effective one: present only when the pack declared a workdir and that
+// directory existed in the target at sync time. Absent means "this pack's checks run at the root",
+// and verify treats its absence as authoritative rather than looking for the directory again.
+type LockPack = { name: string; version: string; workdir?: string };
 
 type Lock = {
   program_version: string;
@@ -40,6 +43,7 @@ type ResolvedPack = {
   packDir: string;
   version: string;
   implementsIds: string[];
+  declaredWorkdir: string | null;
 };
 
 function toStringArray(value: unknown): string[] {
@@ -65,8 +69,24 @@ function resolvePacks(root: string, packNames: string[]): ResolvedPack[] {
       packDir,
       version,
       implementsIds: toStringArray(pack.manifest.implements),
+      declaredWorkdir: typeof pack.manifest.workdir === "string" ? pack.manifest.workdir : null,
     };
   });
+}
+
+/**
+ * Resolves a pack's declared workdir against the target, once, at sync time.
+ *
+ * The manifest says where a pack's component lives when there is one; whether there is one is a
+ * fact about this repository, and it is decided here and written into the lock. Deciding it again
+ * at verify time, by looking for the directory, is what made the gate guessable: a single component
+ * repository that happened to grow an unrelated `backend/` directory would silently move every one
+ * of that pack's checks into it, and a green repository would go red (or worse, stay green while
+ * checking the wrong tree). Pinning it means only a re-sync can move a pack's checks.
+ */
+function pinWorkdir(targetDir: string, declared: string | null): string | undefined {
+  if (declared === null) return undefined;
+  return existsSync(join(targetDir, declared)) ? declared : undefined;
 }
 
 function copyFilesWithExtension(srcDir: string, destDir: string, extension: string): void {
@@ -130,9 +150,10 @@ export function vendorInto(
   profile: Profile,
 ): void {
   const root = resolve(corpusDir);
+  const target = resolve(targetDir);
   const resolvedPacks = resolvePacks(root, packNames);
 
-  const eepDir = join(resolve(targetDir), ".eep");
+  const eepDir = join(target, ".eep");
   const waiversPath = join(eepDir, WAIVERS_FILE_NAME);
   const preservedWaivers = existsSync(waiversPath) ? readFileSync(waiversPath) : null;
 
@@ -149,7 +170,12 @@ export function vendorInto(
     const destDir = join(eepDir, relative(root, resolved.packDir));
     copyPackExcludingScaffold(resolved.packDir, destDir);
     for (const id of resolved.implementsIds) implementsUnion.add(id);
-    lockPacks.push({ name: resolved.name, version: resolved.version });
+    const workdir = pinWorkdir(target, resolved.declaredWorkdir);
+    lockPacks.push(
+      workdir === undefined
+        ? { name: resolved.name, version: resolved.version }
+        : { name: resolved.name, version: resolved.version, workdir },
+    );
   }
 
   copyDoctrineLaws(root, eepDir, implementsUnion);

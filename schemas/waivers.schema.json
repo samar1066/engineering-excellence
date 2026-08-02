@@ -8,6 +8,7 @@
     "required": ["law", "scope", "justification", "owner", "created", "expires"],
     "properties": {
       "law": { "type": "string", "pattern": "^EEP-" },
+      "pack": { "type": "string", "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$" },
       "scope": { "type": "string", "minLength": 1 },
       "justification": { "type": "string", "minLength": 20 },
       "owner": { "type": "string", "pattern": "^@" },

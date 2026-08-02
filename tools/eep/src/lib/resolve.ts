@@ -17,9 +17,8 @@ export type ResolvedLaw = {
   declined: string | null;
   changedOnly: boolean;
   waivable: boolean;
-  // The pack manifest's optional `workdir`, carried here rather than re-read by every consumer:
-  // an entry already names its pack, and verify has to know where that pack's checks run without
-  // opening the manifest a second time. null means "the pack declared none": run at the root.
+  // The pinned workdir for this entry's pack, taken from the caller's map (which verify reads out
+  // of lock.yaml) and never from the pack manifest. null means "run at the repository root".
   workdir: string | null;
 };
 
@@ -80,12 +79,6 @@ function toWaivable(value: unknown): boolean {
   return value !== false;
 }
 
-// pack.yaml's `workdir` is optional (see schemas/pack.schema.json), so anything other than a
-// non-empty string means the pack made no claim and its checks belong at the repository root.
-function toWorkdir(value: unknown): string | null {
-  return typeof value === "string" && value !== "" ? value : null;
-}
-
 // Declined entries fall back to the law id as a title when the law file cannot be found at all,
 // since a decline is still reportable even for a law the corpus has not authored yet.
 function readOptionalTitle(lawPath: string | null, fallback: string): string {
@@ -103,11 +96,18 @@ function readOptionalTitle(lawPath: string | null, fallback: string): string {
  * toolchain, so a repository carrying a backend and a frontend has to satisfy the coverage law in
  * both, and one pack passing must never stand in for the other. Declines resolve per pack for the
  * same reason: a pack declining a law says nothing about whether its sibling implements it.
+ *
+ * `pinnedWorkdirs` carries each pack's effective workdir, decided at sync time and recorded in
+ * lock.yaml (see lib/vendor.ts). It is passed in rather than read from the pack manifests here: a
+ * manifest says where a pack's component lives when there is one, and only the sync that laid the
+ * repository out knows whether there is. A caller with no lock to read, like the agent file
+ * generator, passes nothing and gets root scoped entries.
  */
 export function resolveLaws(
   packNames: string[],
   profile: Profile,
   corpusDir: string,
+  pinnedWorkdirs: ReadonlyMap<string, string> = new Map(),
 ): ResolvedLaw[] {
   const profileFile = readProfile(corpusDir, profile);
   if (profileFile.status === "reserved") {
@@ -122,7 +122,7 @@ export function resolveLaws(
     const pack = loadPack(dir);
     const implementsList = toStringArray(pack.manifest.implements);
     const declineEntries = toDeclineEntries(pack.manifest.declines);
-    const workdir = toWorkdir(pack.manifest.workdir);
+    const workdir = pinnedWorkdirs.get(packName) ?? null;
 
     for (const id of implementsList) {
       const lawPath = findLawFile(corpusDir, id);

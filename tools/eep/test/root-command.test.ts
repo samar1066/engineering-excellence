@@ -7,21 +7,12 @@ import { parse as parseYaml } from "yaml";
 import { capabilityScreenLines, runSync } from "../src/commands/root.js";
 import { TIP_LINE } from "../src/lib/install-offer.js";
 import { repoRoot } from "../src/lib/schema.js";
+import { childPath } from "./helpers.js";
 
 const corpusDir = repoRoot();
 
 function newTargetDir(prefix: string): string {
   return mkdtempSync(join(tmpdir(), prefix));
-}
-
-// This machine's PATH with every directory that carries an eep executable removed. Pinning it is
-// what makes the guidance assertions below deterministic: whether the developer running this suite
-// happens to have done a global install is otherwise visible in the output under test.
-function pathWithoutEep(): string {
-  return (process.env.PATH ?? "")
-    .split(delimiter)
-    .filter((entry) => entry !== "" && !existsSync(join(entry, "eep")))
-    .join(delimiter);
 }
 
 // The same PATH with a stand in for npm's global shim prepended. Never executed: the resolver only
@@ -31,7 +22,7 @@ function pathWithFakeEep(): string {
   const file = join(dir, "eep");
   writeFileSync(file, "#!/bin/sh\nexit 0\n");
   chmodSync(file, 0o755);
-  return [dir, pathWithoutEep()].join(delimiter);
+  return [dir, childPath()].join(delimiter);
 }
 
 async function withPath<T>(value: string, fn: () => T | Promise<T>): Promise<T> {
@@ -232,7 +223,7 @@ describe("runSync", () => {
 describe("capabilityScreenLines", () => {
   it("names what eep is, what ships today, and what is on the roadmap", async () => {
     const targetDir = newTargetDir("eep-capabilities-bare-");
-    const screen = await withPath(pathWithoutEep(), () =>
+    const screen = await withPath(childPath(), () =>
       capabilityScreenLines(corpusDir, targetDir).join("\n"),
     );
 
@@ -249,7 +240,7 @@ describe("capabilityScreenLines", () => {
     const targetDir = newTargetDir("eep-capabilities-detected-");
     writeFastApiPyproject(targetDir);
 
-    const screen = await withPath(pathWithoutEep(), () =>
+    const screen = await withPath(childPath(), () =>
       capabilityScreenLines(corpusDir, targetDir).join("\n"),
     );
 
@@ -283,7 +274,7 @@ describe("invocation aware guidance and the global install offer", () => {
   it("prints the npx form and one install hint when eep is not on PATH", async () => {
     const targetDir = newTargetDir("eep-sync-guidance-npx-");
 
-    const output = await withPath(pathWithoutEep(), () =>
+    const output = await withPath(childPath(), () =>
       captureLog(async () => {
         await runSync({ targetDir, corpusDir, tokens: ["fastapi"], yes: true });
       }),
@@ -315,7 +306,7 @@ describe("invocation aware guidance and the global install offer", () => {
   it("suppresses the hint entirely when the install offer is turned off", async () => {
     const targetDir = newTargetDir("eep-sync-guidance-nooffer-");
 
-    const output = await withPath(pathWithoutEep(), () =>
+    const output = await withPath(childPath(), () =>
       captureLog(async () => {
         await runSync({
           targetDir,

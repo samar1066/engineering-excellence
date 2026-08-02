@@ -29,6 +29,28 @@ const NAME_PATTERN = /^[a-z][a-z0-9_]*$/;
 const DEFAULT_PACK = "python-fastapi";
 const PROJECT_NAME_TOKEN = "{{project_name}}";
 
+const GITHUB_DIR = ".github";
+const ROOT_WORKFLOW = `${GITHUB_DIR}/workflows/ci.yml`;
+
+/**
+ * The files a composed root writes for itself and will not accept from a pack.
+ *
+ * A root placed scaffold shipping one of these would either be silently overwritten by the
+ * generated version or silently overwrite it, and either way the repository would end up with a
+ * file nobody chose. Shipping one is refused by name (see rejectRootScaffoldConflicts).
+ *
+ * Two deliberate absences:
+ *
+ * `.gitignore` is merged rather than generated, so a root scaffold's entries are kept alongside the
+ * components' (see buildRootGitignore).
+ *
+ * `.github/workflows/ci.yml` is generated only when no pack provides one. A delivery pack whose
+ * whole purpose is continuous delivery knows more about this repository's CI than a generic
+ * generator does (guarded per component jobs, environment promotion, approvals), so pack owned CI
+ * wins and the generic is skipped rather than either file being refused. See rootWorkflowProvider.
+ */
+const GENERATED_ROOT_FILES = ["README.md", "Makefile"];
+
 // A project eep created is a project with no history to be compatible with, so both init paths
 // vendor under the strictest profile.
 const INIT_PROFILE: WritableProfile = "greenfield";
@@ -84,17 +106,35 @@ function ensureEmptyProjectDir(projectDir: string): boolean {
   return existedBefore;
 }
 
+function scaffoldFiles(scaffoldDir: string): string[] {
+  return fg.sync("**/*", { cwd: scaffoldDir, dot: true, onlyFiles: true }).sort();
+}
+
 // Every scaffold file is UTF-8 text (no binary assets under packs/*/*/scaffold today), so one
 // read-replace-write pass over every file, dotfiles included, covers the whole tree without a
 // separate binary copy path.
-function copyScaffold(scaffoldDir: string, destDir: string, name: string): void {
-  const relPaths = fg.sync("**/*", { cwd: scaffoldDir, dot: true, onlyFiles: true }).sort();
-  for (const relPath of relPaths) {
+function copyScaffold(
+  scaffoldDir: string,
+  destDir: string,
+  name: string,
+  skip?: (relPath: string) => boolean,
+): void {
+  for (const relPath of scaffoldFiles(scaffoldDir)) {
+    if (skip?.(relPath) === true) continue;
     const destPath = join(destDir, relPath);
     mkdirSync(dirname(destPath), { recursive: true });
     const content = readFileSync(join(scaffoldDir, relPath), "utf8");
     writeFileSync(destPath, content.replaceAll(PROJECT_NAME_TOKEN, name));
   }
+}
+
+// CI belongs to a repository, not to a directory inside one. A component scaffold's own workflows
+// describe how to gate that stack when it is the whole repository, which is exactly what it is not
+// once it is composed: the composed root generates one workflow covering every component (see
+// buildRootWorkflow), and a copy buried in backend/.github would never run on any push while
+// looking, to a reader and to EEP-DLV-01 alike, as though CI existed.
+function isWorkflowPath(relPath: string): boolean {
+  return relPath === GITHUB_DIR || relPath.startsWith(`${GITHUB_DIR}/`);
 }
 
 // The one sanctioned git use in runInit: initializing and committing the project directory it
@@ -149,6 +189,69 @@ function rejectUnknownTokens(unknown: string[], corpusDir: string): void {
   throw new Error(`eep: unknown framework: ${unknown.join(", ")}; valid tokens: ${valid}`);
 }
 
+/**
+ * Two packs rendering at the repository root must not both write the same file.
+ *
+ * Unlike component directories, which are one per pack by construction, the root is shared, so two
+ * root placed scaffolds can overlap on any path at all. The loser would be whichever pack happened
+ * to be copied second, and nothing in the result would record that a file had been replaced. Both
+ * packs and the exact path are named, because the fix depends on which file it is.
+ */
+function rejectCollidingRootFiles(placements: Placement[]): void {
+  const owner = new Map<string, string>();
+  for (const placement of placements) {
+    if (placement.componentDir !== null || placement.scaffoldDir === null) continue;
+    for (const relPath of scaffoldFiles(placement.scaffoldDir)) {
+      const first = owner.get(relPath);
+      if (first !== undefined) {
+        throw new Error(
+          `eep: packs ${first} and ${placement.pack} both write ${relPath} at the repository root`,
+        );
+      }
+      owner.set(relPath, placement.pack);
+    }
+  }
+}
+
+/**
+ * The pack whose root placed scaffold provides the repository's CI workflow, if any.
+ *
+ * `.github/workflows/ci.yml` is the one generated root file a pack is allowed to own. A delivery
+ * pack exists to know how this repository ships: its workflow carries guarded per component jobs,
+ * environment promotion, and approvals, all of which are strictly richer than what a generic
+ * generator can infer from a list of component directories. So when a pack provides one, it is
+ * copied and the generic is not written at all, and the run says so rather than leaving the reader
+ * to wonder which of the two they got.
+ *
+ * Two root packs both shipping it is still a collision like any other, caught by
+ * rejectCollidingRootFiles: this exemption is about pack versus generated, never pack versus pack.
+ */
+function rootWorkflowProvider(placements: Placement[]): string | null {
+  for (const placement of placements) {
+    if (placement.componentDir !== null || placement.scaffoldDir === null) continue;
+    if (scaffoldFiles(placement.scaffoldDir).includes(ROOT_WORKFLOW)) return placement.pack;
+  }
+  return null;
+}
+
+// A root placed scaffold may not ship a file the composed root generates for itself. Refused rather
+// than resolved by ordering: whichever way it were ordered, one of the two files would be lost, and
+// a repository whose README is not the one its author expects is worse than a run that stopped and
+// said which pack to talk to. The CI workflow is the documented exception; see
+// rootWorkflowProvider.
+function rejectRootScaffoldConflicts(placements: Placement[]): void {
+  for (const placement of placements) {
+    if (placement.componentDir !== null || placement.scaffoldDir === null) continue;
+    for (const relPath of scaffoldFiles(placement.scaffoldDir)) {
+      if (GENERATED_ROOT_FILES.includes(relPath)) {
+        throw new Error(
+          `eep: pack ${placement.pack} ships ${relPath} at the repository root, which a composed init generates`,
+        );
+      }
+    }
+  }
+}
+
 // Two packs writing into one directory would interleave two scaffolds silently, and the loser
 // would be whichever pack happened to be copied second. Refused up front, by name, so the fix is
 // obvious: drop one of the two, or give one a component directory of its own.
@@ -172,9 +275,10 @@ function rejectCollidingComponentDirs(placements: Placement[]): void {
  *
  * Every refusal a composed init can raise happens here, before the project directory exists: a
  * stack pack with no component_dir has nowhere to put its component, a stack pack with no scaffold
- * has no component to put there, two packs claiming one directory would overwrite each other, and
- * a set with no stack pack is a repository of supporting files around an application that was
- * never chosen.
+ * has no component to put there, two packs claiming one directory or one root file would overwrite
+ * each other, a root scaffold shipping a file the root generates would be overwritten by it, and a
+ * set with no stack pack is a repository of supporting files around an application that was never
+ * chosen.
  */
 function planComposedLayout(corpusDir: string, packs: string[]): Placement[] {
   const placements: Placement[] = [];
@@ -200,6 +304,8 @@ function planComposedLayout(corpusDir: string, packs: string[]): Placement[] {
   }
 
   rejectCollidingComponentDirs(placements);
+  rejectCollidingRootFiles(placements);
+  rejectRootScaffoldConflicts(placements);
 
   if (!placements.some((placement) => placement.kind === "stack")) {
     throw new Error(`eep: composed init needs at least one stack pack; got ${packs.join(", ")}`);
@@ -218,9 +324,6 @@ function planLayout(opts: InitOptions, tokens: string[]): Plan {
 
   const { packs, comingSoon, unknown } = resolveFrameworks(tokens, opts.corpusDir);
   rejectUnknownTokens(unknown, opts.corpusDir);
-  if (comingSoon.length > 0) {
-    console.log(`eep init: coming soon, skipped: ${comingSoon.join(", ")}`);
-  }
   // Separate from the "no stack pack" refusal below, and worded like the root sync's, because
   // nothing was wrong with what the user typed: every token they named is simply still on the
   // roadmap, and naming them back would read as an accusation.
@@ -228,52 +331,108 @@ function planLayout(opts: InitOptions, tokens: string[]): Plan {
     throw new Error("eep: nothing to compose; no requested framework has a pack yet");
   }
 
-  return { mode: "composed", packs, placements: planComposedLayout(opts.corpusDir, packs) };
+  const placements = planComposedLayout(opts.corpusDir, packs);
+
+  // Printed only once the layout is known to be buildable. A run that is about to abort should say
+  // why it aborted, not first report progress on a project it will never create.
+  if (comingSoon.length > 0) {
+    console.log(`eep init: coming soon, skipped: ${comingSoon.join(", ")}`);
+  }
+
+  return { mode: "composed", packs, placements };
 }
 
-const ROOT_TARGETS = ["setup", "test", "verify"] as const;
+// Targets that fan out into the components. `verify` is deliberately not among them.
+const FANOUT_TARGETS = ["setup", "test"] as const;
 
-// Kept byte identical in intent to the scaffold Makefile's own verify target: a bare `eep` when a
-// global install put one on PATH, the published package otherwise, so the root gate runs for a
-// consumer who has never installed anything.
+// The gate, in the one form the shell running it actually has: a bare `eep` when a global install
+// put one on PATH, the published package otherwise, so the gate runs for a consumer who has never
+// installed anything. `@` because make would otherwise echo the whole conditional before running it,
+// which reads as noise above the gate's own output.
 const VERIFY_FALLBACK = [
-  "\tif command -v eep >/dev/null 2>&1; then eep verify; \\",
+  "\t@if command -v eep >/dev/null 2>&1; then eep verify; \\",
   "\telse npx -y engineering-excellence verify; fi",
 ];
 
 /**
- * The root Makefile: one entry point that fans each target out into every component carrying a
- * Makefile of its own.
+ * The root Makefile.
+ *
+ * `setup` and `test` fan out into every component carrying a Makefile of its own. `verify` does
+ * not, and that is the whole point: a component's own `verify` target runs the eep gate from inside
+ * that component, where there is no `.eep` directory (the composed repository has exactly one, at
+ * the root), so recursing into it could only ever produce "no .eep found" and fail. The root gate
+ * already covers every component, because it resolves every pack's laws against every pack's pinned
+ * workdir, so recursion would be wrong even if it worked.
  *
  * The `-f $$c/Makefile` guard is not redundant with the generated COMPONENTS list. The list is a
  * fact about the day the project was created, and a component removed or replaced afterwards must
  * degrade to being skipped rather than breaking every target in the repository.
- *
- * `verify` additionally runs the eep gate at the root, which is the only place the whole law set
- * across every pack is resolved and reported.
  */
 function buildRootMakefile(componentDirs: string[]): string {
   const lines: string[] = [
-    `.PHONY: ${ROOT_TARGETS.join(" ")}`,
+    `.PHONY: ${[...FANOUT_TARGETS, "verify"].join(" ")}`,
     `COMPONENTS = ${componentDirs.join(" ")}`,
     "",
   ];
-  for (const target of ROOT_TARGETS) {
+  for (const target of FANOUT_TARGETS) {
     lines.push(`${target}:`);
     lines.push("\t@for c in $(COMPONENTS); do \\");
     lines.push(`\t  if [ -f $$c/Makefile ]; then $(MAKE) -C $$c ${target} || exit 1; fi; \\`);
     lines.push("\tdone");
-    if (target === "verify") lines.push(...VERIFY_FALLBACK);
     lines.push("");
   }
+  lines.push("verify:", ...VERIFY_FALLBACK, "");
   return lines.join("\n");
 }
 
-function buildRootReadme(name: string, placements: Placement[]): string {
-  const components = placements.map((placement) => {
-    const where = placement.componentDir ?? "the repository root";
-    return `- \`${where}\`: ${placement.pack}`;
-  });
+/**
+ * The root CI workflow.
+ *
+ * Generated rather than inherited from a component: a component scaffold's workflow gates that
+ * stack as though it were the whole repository, and once composed it is not. One job per component
+ * runs that component's own test target where the component actually is, and a final gate job runs
+ * the eep gate over the whole tree, which is the only place every pack's laws are resolved together.
+ *
+ * The gate job is also what EEP-DLV-01 finds: its check greps the repository's workflows for the
+ * words `eep verify`, and the workflows a composed repository has are exactly these.
+ */
+function buildRootWorkflow(componentDirs: string[]): string {
+  const lines = ["name: ci", "on:", "  push:", "    branches: [main]", "  pull_request:", "jobs:"];
+  for (const dir of componentDirs) {
+    lines.push(
+      `  test-${dir}:`,
+      "    runs-on: ubuntu-latest",
+      "    steps:",
+      "      - uses: actions/checkout@v4",
+      `      - name: ${dir} tests`,
+      `        run: cd ${dir} && make test`,
+    );
+  }
+  lines.push(
+    "  gate:",
+    "    runs-on: ubuntu-latest",
+    "    steps:",
+    "      - uses: actions/checkout@v4",
+    "      # The whole law set, every pack, every component: eep verify",
+    "      - name: eep verify",
+    "        run: if command -v eep >/dev/null 2>&1; then eep verify; else npx -y engineering-excellence verify; fi",
+    "",
+  );
+  return lines.join("\n");
+}
+
+// Only the components that actually exist on disk. A pack can claim a component directory and ship
+// no scaffold to fill it, and a README naming a directory the reader cannot open is worse than one
+// that says nothing about it.
+function buildRootReadme(name: string, componentDirs: string[], placements: Placement[]): string {
+  const owner = new Map(
+    placements.flatMap((placement) =>
+      placement.componentDir === null ? [] : [[placement.componentDir, placement.pack] as const],
+    ),
+  );
+  const components = componentDirs.map(
+    (dir) => `- \`${dir}\`: ${owner.get(dir) ?? "unknown pack"}`,
+  );
 
   return [
     `# ${name}`,
@@ -289,7 +448,7 @@ function buildRootReadme(name: string, placements: Placement[]): string {
     "",
     "- `make setup`: prepare every component that ships a Makefile.",
     "- `make test`: run every component's own test target.",
-    "- `make verify`: run every component's verify target, then the full eep gate at the root.",
+    "- `make verify`: run the full eep gate over every component, from the root.",
     "",
     "The laws in force, the pack enforcing each one, and the command that proves it are listed in",
     "CLAUDE.md, which eep generates. Do not edit it by hand.",
@@ -332,6 +491,16 @@ function syncAtRoot(projectDir: string, corpusDir: string, packs: string[]): voi
   installGitHook(projectDir);
 }
 
+/**
+ * Renders the whole composed tree.
+ *
+ * Order is load bearing. Every pack scaffold, component placed and root placed alike, is copied
+ * first; the generated root files are written last, over a tree whose pack contributed contents are
+ * already final. That way `.gitignore` can be merged from what the packs actually wrote (including
+ * a root pack's own), and the generated README and Makefile describe the components that exist
+ * rather than the ones that were planned. Planning has already refused the case where a root pack
+ * ships one of the generated files, so writing last cannot destroy anything a pack contributed.
+ */
 async function materializeComposed(
   plan: { packs: string[]; placements: Placement[] },
   projectDir: string,
@@ -340,18 +509,42 @@ async function materializeComposed(
   const destDirs: string[] = [];
   for (const placement of plan.placements) {
     if (placement.scaffoldDir === null) continue;
+    const isComponent = placement.componentDir !== null;
     const destDir =
       placement.componentDir === null ? projectDir : join(projectDir, placement.componentDir);
-    copyScaffold(placement.scaffoldDir, destDir, opts.name);
+    copyScaffold(
+      placement.scaffoldDir,
+      destDir,
+      opts.name,
+      isComponent ? isWorkflowPath : undefined,
+    );
     destDirs.push(destDir);
   }
 
   const componentDirs = plan.placements
     .flatMap((placement) => (placement.componentDir === null ? [] : [placement.componentDir]))
-    .filter((dir) => existsSync(join(projectDir, dir, "Makefile")));
+    .filter((dir) => existsSync(join(projectDir, dir)));
+  const buildableDirs = componentDirs.filter((dir) =>
+    existsSync(join(projectDir, dir, "Makefile")),
+  );
 
-  writeFileSync(join(projectDir, "README.md"), buildRootReadme(opts.name, plan.placements));
-  writeFileSync(join(projectDir, "Makefile"), buildRootMakefile(componentDirs));
+  writeFileSync(
+    join(projectDir, "README.md"),
+    buildRootReadme(opts.name, componentDirs, plan.placements),
+  );
+  writeFileSync(join(projectDir, "Makefile"), buildRootMakefile(buildableDirs));
+
+  // Pack owned CI wins, and the copy is left exactly as the pack wrote it. Announced because
+  // "where did my CI come from" is otherwise answerable only by reading the file.
+  const workflowProvider = rootWorkflowProvider(plan.placements);
+  if (workflowProvider === null) {
+    const workflowPath = join(projectDir, ROOT_WORKFLOW);
+    mkdirSync(dirname(workflowPath), { recursive: true });
+    writeFileSync(workflowPath, buildRootWorkflow(buildableDirs));
+  } else {
+    console.log(`eep init: root ci provided by ${workflowProvider}`);
+  }
+
   const gitignore = buildRootGitignore(destDirs);
   if (gitignore !== "") writeFileSync(join(projectDir, ".gitignore"), gitignore);
 

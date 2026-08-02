@@ -3,7 +3,12 @@ import { join, resolve } from "node:path";
 import type { Command } from "commander";
 import { execa } from "execa";
 import { parse as parseYaml } from "yaml";
-import { type BuiltinResult, runBuiltin } from "../lib/checks.js";
+import {
+  type BuiltinResult,
+  isRepoWideBuiltin,
+  runBuiltin,
+  scopeBuiltinToWorkdir,
+} from "../lib/checks.js";
 import type { CheckEntry } from "../lib/pack.js";
 import { type Profile, type ResolvedLaw, resolveLaws } from "../lib/resolve.js";
 import { loadWaivers, type Waiver } from "../lib/waivers.js";
@@ -61,15 +66,21 @@ function readYamlObject(path: string): Record<string, unknown> {
   return parsed as Record<string, unknown>;
 }
 
+type LockPack = { name: string; workdir: string | null };
+
 /**
- * Reads the pack names out of lock.yaml's `packs` list, which vendor.ts writes as {name, version}
- * objects.
+ * Reads lock.yaml's `packs` list, which vendor.ts writes as {name, version, workdir?} objects.
+ *
+ * The workdir is the pinned one: present only when that pack's component directory existed when the
+ * repository was last synced. Absent means the pack's checks run at the root, and that absence is
+ * authoritative. Verify never looks for the directory itself, so a repository cannot silently move
+ * its own gate by creating a directory that happens to share a pack's workdir name.
  *
  * Every failure throws rather than being filtered away. A lock file whose entries do not parse
  * would otherwise resolve to fewer laws, or none, and a gate that quietly checks less than it was
  * configured to check is worse than one that refuses to run.
  */
-function toPackNames(value: unknown): string[] {
+function toLockPacks(value: unknown): LockPack[] {
   if (value === undefined || value === null) {
     throw new Error("eep: .eep/lock.yaml has no packs list; run eep adopt again");
   }
@@ -84,8 +95,17 @@ function toPackNames(value: unknown): string[] {
     if (typeof name !== "string" || name === "") {
       throw new Error(`eep: .eep/lock.yaml packs[${index}] has no name; run eep adopt again`);
     }
-    return name;
+    const workdir = (entry as { workdir?: unknown }).workdir;
+    return { name, workdir: typeof workdir === "string" && workdir !== "" ? workdir : null };
   });
+}
+
+function pinnedWorkdirs(packs: LockPack[]): ReadonlyMap<string, string> {
+  const map = new Map<string, string>();
+  for (const pack of packs) {
+    if (pack.workdir !== null) map.set(pack.name, pack.workdir);
+  }
+  return map;
 }
 
 function toProfile(value: unknown): Profile {
@@ -175,92 +195,111 @@ async function runShellCheck(entry: CheckEntry, targetDir: string): Promise<Buil
   return { ok: false, detail: detail === "" ? `exited ${exitCode} with no output` : detail };
 }
 
-/**
- * Where one pack's checks run.
- *
- * A pack that declares `workdir: W` owns the component at `<target>/W`: its shell checks run with
- * that directory as their working directory, and its builtin file arguments resolve against it, so
- * a composed repository runs each pack's toolchain where that pack's code actually is.
- *
- * A declared workdir that does not exist falls back to the target root rather than failing. The
- * same pack has to keep working in the single component repository it was written for, where its
- * code sits at the root and no component directory was ever created.
- */
-function workDirFor(law: ResolvedLaw, targetDir: string): string {
-  if (law.workdir === null) return targetDir;
-  const candidate = join(targetDir, law.workdir);
-  return existsSync(candidate) ? candidate : targetDir;
-}
-
 function builtinName(command: string): string {
   return command.trim().split(/\s+/)[0] ?? "";
 }
 
+/**
+ * Runs one law's check.
+ *
+ * Builtins always execute with the repository root as their base directory. A pack's pinned workdir
+ * is folded into the command's path argument instead (see scopeBuiltinToWorkdir), so `file-contains
+ * Makefile setup` from a pack pinned to `backend` becomes `file-contains backend/Makefile setup`.
+ * That keeps every path a failure reports relative to the repository root, which is the only form a
+ * reader can act on when two components carry a file of the same name.
+ *
+ * Repo wide builtins are computed once per command string and their result is shared across every
+ * pack's row. Two packs carrying `docs-style .` are asking one question about one repository, and
+ * scanning the tree once per pack would multiply the cost of the slowest checks by the number of
+ * components while producing identical answers.
+ */
 async function runCheck(
   law: ResolvedLaw,
   targetDir: string,
   scope: ChangedScope,
+  repoWideCache: Map<string, BuiltinResult>,
 ): Promise<VerifyResult> {
+  const row = { law: law.id, pack: law.pack, severity: law.severity };
   const check = law.check;
   if (check === null) {
     return {
-      law: law.id,
-      pack: law.pack,
+      ...row,
       status: "skipped",
-      severity: law.severity,
       detail: "no check is defined for this law in the active packs",
     };
   }
 
-  const runDir = workDirFor(law, targetDir);
-
   if (check.kind === "builtin") {
-    const name = builtinName(check.command);
-    // secrets-scan is the one builtin a workdir never narrows. A credential committed anywhere in
-    // the repository is a repository wide failure, and scoping the scan to one component would let
-    // the same leak pass in the directory next door.
-    const base = name === "secrets-scan" ? targetDir : runDir;
-    const isDocsStyle = name === "docs-style";
+    const isDocsStyle = builtinName(check.command) === "docs-style";
     const restrictTo = isDocsStyle && scope.restrictTo !== null ? scope.restrictTo : undefined;
-    const result = runBuiltin(check.command, base, restrictTo);
     const note = isDocsStyle ? scope.note : "";
+
+    let result: BuiltinResult;
+    if (isRepoWideBuiltin(check.command)) {
+      const cached = repoWideCache.get(check.command);
+      result = cached ?? runBuiltin(check.command, targetDir, restrictTo);
+      if (cached === undefined) repoWideCache.set(check.command, result);
+    } else {
+      const command = scopeBuiltinToWorkdir(check.command, law.workdir ?? "");
+      result = runBuiltin(command, targetDir, restrictTo);
+    }
+
     return {
-      law: law.id,
-      pack: law.pack,
+      ...row,
       status: result.ok ? "pass" : "fail",
-      severity: law.severity,
       detail: `${result.detail}${note}`,
     };
   }
 
+  // A pinned workdir that has since been deleted is reported as this pack's failure rather than
+  // quietly falling back to the root. Falling back would run a component's build in a directory
+  // that is not that component, and pass or fail for reasons that have nothing to do with it.
+  const runDir = law.workdir === null ? targetDir : join(targetDir, law.workdir);
+  if (!existsSync(runDir)) {
+    return {
+      ...row,
+      status: "fail",
+      detail: `pinned workdir ${law.workdir ?? ""} does not exist; re-run the sync for this repository`,
+    };
+  }
+
   const result = await runShellCheck(check, runDir);
-  return {
-    law: law.id,
-    pack: law.pack,
-    status: result.ok ? "pass" : "fail",
-    severity: law.severity,
-    detail: result.detail,
-  };
+  return { ...row, status: result.ok ? "pass" : "fail", detail: result.detail };
 }
 
-// Scope semantics for this slice: a waiver applies when its law id matches, whatever its scope
-// says, and therefore to every pack's row for that law. The scope field is still required and
-// recorded so waivers stay reviewable, but per path glob matching (waiving a law for docs/** while
-// it still blocks under app/**, or for one component while it blocks in another) lands with fan
-// out, once check results carry the file paths a scope would be matched against.
-function waiversByLaw(active: Waiver[]): Map<string, Waiver> {
-  const byLaw = new Map<string, Waiver>();
-  for (const waiver of active) {
-    if (!byLaw.has(waiver.law)) byLaw.set(waiver.law, waiver);
-  }
-  return byLaw;
+/**
+ * The waiver that applies to one failing row, if any.
+ *
+ * A waiver naming a pack applies only to that pack's row: the coverage law can be bought out for a
+ * legacy service without also excusing the frontend that was never in trouble. A waiver with no
+ * pack applies to every pack's row for its law, which is the blunter instrument and says so in the
+ * result detail. A pack scoped waiver wins over an unscoped one for the same law, since the more
+ * specific statement is the more deliberate one.
+ *
+ * Path scope is still not matched. The `scope` field stays required and recorded so waivers remain
+ * reviewable, but per path glob matching (waiving a law for docs/** while it still blocks under
+ * app/**) needs check results to carry the file paths a scope would be matched against.
+ */
+function findWaiver(active: Waiver[], law: string, pack: string): Waiver | undefined {
+  const forPack = active.find((waiver) => waiver.law === law && waiver.pack === pack);
+  if (forPack !== undefined) return forPack;
+  return active.find((waiver) => waiver.law === law && waiver.pack === undefined);
+}
+
+// One waiver, however many rows it touched: an illegal or expired waiver is a single line to delete
+// from a single file, so it is keyed by the waiver rather than by the row.
+function waiverKey(waiver: Waiver): string {
+  return `${waiver.law}|${waiver.pack ?? "*"}`;
 }
 
 // The original failure detail is kept after the waiver text. A waived result still has to answer
 // "what exactly is being waived here", both for the reviewer approving it and for whoever reads
-// the log the day the waiver expires.
+// the log the day the waiver expires. An unscoped waiver says so, because "this is suppressing the
+// law everywhere" is the part a reviewer most needs to see and the part the file itself does not
+// spell out.
 function applyWaiver(result: VerifyResult, waiver: Waiver): VerifyResult {
-  const head = `waived: ${waiver.justification} (owner ${waiver.owner}, expires ${waiver.expires})`;
+  const reach = waiver.pack === undefined ? " (applies to all packs)" : "";
+  const head = `waived: ${waiver.justification} (owner ${waiver.owner}, expires ${waiver.expires})${reach}`;
   return { ...result, status: "waived", detail: `${head}; original: ${result.detail}` };
 }
 
@@ -292,7 +331,13 @@ export async function runVerify(
   if (!existsSync(lockPath)) throw new Error("eep: no .eep found; run eep adopt first");
 
   const lock = readYamlObject(lockPath);
-  const laws = resolveLaws(toPackNames(lock.packs), toProfile(lock.profile), join(dir, ".eep"));
+  const lockPacks = toLockPacks(lock.packs);
+  const laws = resolveLaws(
+    lockPacks.map((pack) => pack.name),
+    toProfile(lock.profile),
+    join(dir, ".eep"),
+    pinnedWorkdirs(lockPacks),
+  );
   // Fail closed. Zero laws means the gate would report a clean pass while proving nothing at all,
   // which is the one outcome a gate must never produce by accident.
   if (laws.length === 0) {
@@ -303,15 +348,11 @@ export async function runVerify(
 
   const scope = opts?.changed === true ? await changedScope(dir) : FULL_SCOPE;
   const { active, problems } = loadWaivers(dir);
-  const byLaw = waiversByLaw(active);
 
   const results: VerifyResult[] = [];
   const refusedWaivers: string[] = [];
-
-  // One illegal waiver is one governance failure, however many packs' rows it was refused on:
-  // deleting it is a single action, and reporting it once per pack would just repeat the same
-  // sentence back at whoever has to do it.
-  const refusedLaws = new Set<string>();
+  const refused = new Set<string>();
+  const repoWideCache = new Map<string, BuiltinResult>();
 
   for (const law of laws) {
     if (law.declined !== null) {
@@ -324,15 +365,16 @@ export async function runVerify(
       });
       continue;
     }
-    const result = await runCheck(law, dir, scope);
-    const waiver = result.status === "fail" ? byLaw.get(law.id) : undefined;
+    const result = await runCheck(law, dir, scope, repoWideCache);
+    const waiver = result.status === "fail" ? findWaiver(active, law.id, law.pack) : undefined;
     if (waiver === undefined) {
       results.push(result);
       continue;
     }
     if (!law.waivable) {
-      if (!refusedLaws.has(law.id)) {
-        refusedLaws.add(law.id);
+      const key = waiverKey(waiver);
+      if (!refused.has(key)) {
+        refused.add(key);
         refusedWaivers.push(
           `waiver for ${law.id} (owner ${waiver.owner}) is illegal: ${law.id} is never waivable`,
         );

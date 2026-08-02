@@ -261,10 +261,19 @@ function buildMultiPackEepTree(dir: string, packs: FixturePack[], lockPacks?: un
     enforcement: "all",
     description: "Fixture profile.",
   });
+  // The workdir goes into the lock, which is the only place verify reads it from. The manifest copy
+  // written by writePack is the corpus's declaration; the lock is this repository's pinned answer,
+  // and a fixture that only wrote the manifest would prove nothing about what verify actually does.
   writeYaml(dir, join(".eep", "lock.yaml"), {
     program_version: "0.1.0",
     profile: "greenfield",
-    packs: lockPacks ?? packs.map((pack) => ({ name: pack.name, version: "1.0.0" })),
+    packs:
+      lockPacks ??
+      packs.map((pack) =>
+        pack.workdir === undefined
+          ? { name: pack.name, version: "1.0.0" }
+          : { name: pack.name, version: "1.0.0", workdir: pack.workdir },
+      ),
     vendored: "2026-08-01",
   });
 
@@ -501,21 +510,30 @@ describe("runVerify with two packs implementing one law", () => {
 });
 
 /**
- * A pack that declares `workdir: W` owns the component at <target>/W. Its checks have to run there,
- * or a composed repository would run every pack's toolchain against the repository root, where none
- * of their files are.
+ * A pack pinned to workdir W owns the component at <target>/W. Its checks have to run there, or a
+ * composed repository would run every pack's toolchain against the repository root, where none of
+ * their files are.
+ *
+ * The pin comes from lock.yaml and nowhere else. Verify never looks for the directory itself, which
+ * is what stops a repository from silently moving its own gate by creating a directory that happens
+ * to share a pack's name for one.
  */
-describe("runVerify with a pack that declares a workdir", () => {
+describe("runVerify with a pack pinned to a workdir", () => {
   const dirs: string[] = [];
 
   afterAll(() => {
     for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
   });
 
-  function fixtureWith(laws: FixtureLaw[], workdir = "svc"): string {
+  // null, not undefined, for "pin nothing": an explicit undefined argument re-triggers the default
+  // parameter value, which would silently pin svc in the very test written to prove nothing is
+  // pinned.
+  function fixtureWith(laws: FixtureLaw[], workdir: string | null = "svc"): string {
     const dir = newFixtureDir();
     dirs.push(dir);
-    buildMultiPackEepTree(dir, [{ name: "svc-pack", workdir, laws }]);
+    buildMultiPackEepTree(dir, [
+      { name: "svc-pack", laws, ...(workdir === null ? {} : { workdir }) },
+    ]);
     return dir;
   }
 
@@ -525,7 +543,7 @@ describe("runVerify with a pack that declares a workdir", () => {
     command: "file-contains marker.txt hello",
   };
 
-  it("resolves a builtin file argument under the workdir", async () => {
+  it("resolves a builtin path argument under the pinned workdir", async () => {
     const dir = fixtureWith([DEVX]);
     write(dir, join("svc", "marker.txt"), "hello\n");
 
@@ -536,17 +554,30 @@ describe("runVerify with a pack that declares a workdir", () => {
     expect(result?.pack).toBe("svc-pack");
   });
 
-  it("does not find the same file at the repository root", async () => {
+  // The reported path is the one a reader can act on. A bare "marker.txt does not exist" in a
+  // repository with three components names a file that does not identify itself.
+  it("names the path relative to the repository root, workdir included", async () => {
     const dir = fixtureWith([DEVX]);
     mkdirSync(join(dir, "svc"), { recursive: true });
     write(dir, "marker.txt", "hello\n");
 
     const report = await runVerify(dir);
+    const result = find(report.results, "EEP-DEVX-01");
 
-    expect(find(report.results, "EEP-DEVX-01")?.status).toBe("fail");
+    expect(result?.status).toBe("fail");
+    expect(result?.detail).toContain("svc/marker.txt does not exist");
   });
 
-  it("runs a shell check with the workdir as its working directory", async () => {
+  it("reports a passing path the same rooted way", async () => {
+    const dir = fixtureWith([DEVX]);
+    write(dir, join("svc", "marker.txt"), "hello\n");
+
+    const report = await runVerify(dir);
+
+    expect(find(report.results, "EEP-DEVX-01")?.detail).toContain("svc/marker.txt contains");
+  });
+
+  it("runs a shell check with the pinned workdir as its working directory", async () => {
     const dir = fixtureWith([
       { id: "EEP-DEVX-01", severity: "blocking", kind: "shell", command: "test -f marker.txt" },
     ]);
@@ -557,8 +588,73 @@ describe("runVerify with a pack that declares a workdir", () => {
     expect(find(report.results, "EEP-DEVX-01")?.status).toBe("pass");
   });
 
-  it("keeps the secrets scan repository wide, outside the workdir included", async () => {
-    const dir = fixtureWith([{ id: "EEP-SEC-01", severity: "blocking", command: "secrets-scan" }]);
+  // Never a silent fallback to the root: running a component's build somewhere that is not that
+  // component would pass or fail for reasons that have nothing to do with it.
+  it("fails naming the pin when the pinned workdir has since been deleted", async () => {
+    const dir = fixtureWith([
+      { id: "EEP-DEVX-01", severity: "blocking", kind: "shell", command: "test -f marker.txt" },
+    ]);
+
+    const report = await runVerify(dir);
+    const result = find(report.results, "EEP-DEVX-01");
+
+    expect(result?.status).toBe("fail");
+    expect(result?.detail).toContain("pinned workdir svc does not exist");
+  });
+
+  /**
+   * The reviewer's first probe, reproduced.
+   *
+   * A single component repository adopts a pack whose manifest declares `workdir: svc`, with no svc
+   * directory, so the lock pins none. Somebody later adds an unrelated svc directory. Nothing about
+   * the gate may change: the checks were pinned to the root at sync time and stay there until the
+   * next sync says otherwise.
+   */
+  it("stays at the root when nothing was pinned, even after a directory of that name appears", async () => {
+    const dir = fixtureWith([DEVX], null);
+    write(dir, "marker.txt", "hello\n");
+
+    const before = await runVerify(dir);
+    expect(find(before.results, "EEP-DEVX-01")?.status).toBe("pass");
+
+    write(dir, join("svc", "unrelated.txt"), "not a component\n");
+    const after = await runVerify(dir);
+
+    expect(find(after.results, "EEP-DEVX-01")?.status).toBe("pass");
+    expect(after.failedBlocking).toBe(0);
+  });
+});
+
+/**
+ * Three builtins are facts about the repository, not about one component of it, so a pinned workdir
+ * never narrows them.
+ *
+ * Documentation style is the one the reviewer caught: a composed repository's root README belongs to
+ * no component, so with every pack scoped to its own directory nobody was checking the one document
+ * a reader sees first.
+ */
+describe("runVerify repo wide builtins", () => {
+  const dirs: string[] = [];
+
+  afterAll(() => {
+    for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
+  });
+
+  function fixtureWith(packs: FixturePack[]): string {
+    const dir = newFixtureDir();
+    dirs.push(dir);
+    buildMultiPackEepTree(dir, packs);
+    return dir;
+  }
+
+  it("scans for secrets outside the pinned workdir", async () => {
+    const dir = fixtureWith([
+      {
+        name: "svc-pack",
+        workdir: "svc",
+        laws: [{ id: "EEP-SEC-01", severity: "blocking", command: "secrets-scan" }],
+      },
+    ]);
     write(dir, join("svc", "clean.py"), "value = 1\n");
     write(dir, "leak.py", AWS_KEY_LINE);
 
@@ -569,15 +665,183 @@ describe("runVerify with a pack that declares a workdir", () => {
     expect(secrets?.detail).toContain("leak.py");
   });
 
-  // The same pack has to keep working in the single component repository it was written for, where
-  // its code sits at the root and the component directory was never created.
-  it("falls back to the repository root when the declared workdir does not exist", async () => {
-    const dir = fixtureWith([DEVX]);
-    write(dir, "marker.txt", "hello\n");
+  it("checks markdown style at the repository root, outside the pinned workdir", async () => {
+    const dir = fixtureWith([
+      {
+        name: "svc-pack",
+        workdir: "svc",
+        laws: [{ id: "EEP-DOCS-02", severity: "blocking", command: "docs-style ." }],
+      },
+    ]);
+    write(dir, join("svc", "clean.md"), "# Clean\n\nNothing wrong here.\n");
+    write(dir, "README.md", `# Root\n\nOne thing ${EM_DASH} then another.\n`);
+
+    const report = await runVerify(dir);
+    const docs = find(report.results, "EEP-DOCS-02");
+
+    expect(docs?.status).toBe("fail");
+    expect(docs?.detail).toContain("README.md:3 banned-dash");
+  });
+
+  it("checks markdown frontmatter at the repository root, outside the pinned workdir", async () => {
+    const dir = fixtureWith([
+      {
+        name: "svc-pack",
+        workdir: "svc",
+        laws: [{ id: "EEP-DOCS-01", severity: "blocking", command: "docs-frontmatter docs" }],
+      },
+    ]);
+    write(dir, join("docs", "note.md"), "# Note\n\nNo frontmatter at all.\n");
+
+    const report = await runVerify(dir);
+    const docs = find(report.results, "EEP-DOCS-01");
+
+    expect(docs?.status).toBe("fail");
+    expect(docs?.detail).toContain("docs/note.md");
+  });
+
+  // CI configuration lives at the root of a repository, one copy for the whole tree, so a workdir
+  // must not send this check hunting for a component local copy that should not exist.
+  it("resolves a .github path argument from the root whatever is pinned", async () => {
+    const dir = fixtureWith([
+      {
+        name: "svc-pack",
+        workdir: "svc",
+        laws: [
+          {
+            id: "EEP-DLV-01",
+            severity: "blocking",
+            command: "file-contains-any .github/workflows 'eep verify'",
+          },
+        ],
+      },
+    ]);
+    mkdirSync(join(dir, "svc"), { recursive: true });
+    write(dir, join(".github", "workflows", "ci.yml"), "steps:\n  - run: eep verify\n");
 
     const report = await runVerify(dir);
 
-    expect(find(report.results, "EEP-DEVX-01")?.status).toBe("pass");
+    expect(find(report.results, "EEP-DLV-01")?.status).toBe("pass");
+  });
+
+  // One question about one repository, asked by two packs, gets one answer. The rows are still one
+  // per pack, so the report contract is unchanged; only the scanning is shared.
+  it("fans one result to every pack's row for the same command", async () => {
+    const dir = fixtureWith([
+      {
+        name: "pack-a",
+        workdir: "a",
+        laws: [{ id: "EEP-DOCS-02", severity: "blocking", command: "docs-style ." }],
+      },
+      {
+        name: "pack-b",
+        workdir: "b",
+        laws: [{ id: "EEP-DOCS-02", severity: "blocking", command: "docs-style ." }],
+      },
+    ]);
+    mkdirSync(join(dir, "a"), { recursive: true });
+    mkdirSync(join(dir, "b"), { recursive: true });
+    write(dir, "README.md", `# Root\n\nOne thing ${EM_DASH} then another.\n`);
+
+    const report = await runVerify(dir);
+    const rows = report.results.filter((result) => result.law === "EEP-DOCS-02");
+
+    expect(rows).toHaveLength(2);
+    expect(rows.map((row) => row.pack)).toEqual(["pack-a", "pack-b"]);
+    expect(rows[0]?.detail).toBe(rows[1]?.detail);
+    expect(report.failedBlocking).toBe(2);
+  });
+});
+
+/**
+ * A waiver naming a pack buys out that pack's row and no other.
+ *
+ * Without this, the only way to excuse a legacy service from a law was to excuse every component of
+ * it, which is how a waiver written for one directory silently stops gating the repository.
+ */
+describe("runVerify with pack scoped waivers", () => {
+  const dirs: string[] = [];
+
+  afterAll(() => {
+    for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
+  });
+
+  const FAILING: FixtureLaw = {
+    id: "EEP-DEVX-01",
+    severity: "blocking",
+    command: "file-contains absent.txt marker",
+  };
+
+  function fixtureWith(waiver: string): string {
+    const dir = newFixtureDir();
+    dirs.push(dir);
+    buildMultiPackEepTree(dir, [
+      { name: "pack-a", laws: [FAILING] },
+      { name: "pack-b", laws: [FAILING] },
+    ]);
+    write(dir, join(".eep", "waivers.yaml"), waiver);
+    return dir;
+  }
+
+  function waiverFor(law: string, pack?: string): string {
+    const lines = [
+      `- law: ${law}`,
+      ...(pack === undefined ? [] : [`  pack: ${pack}`]),
+      "  scope: '**/*'",
+      '  justification: "The legacy service is rewritten next sprint."',
+      "  owner: '@fixture-owner'",
+      "  created: 2026-08-01",
+      "  expires: 2026-11-01",
+      "",
+    ];
+    return lines.join("\n");
+  }
+
+  it("flips only the named pack's row and keeps gating on the other", async () => {
+    const dir = fixtureWith(waiverFor("EEP-DEVX-01", "pack-a"));
+
+    const report = await runVerify(dir);
+
+    expect(findFor(report.results, "EEP-DEVX-01", "pack-a")?.status).toBe("waived");
+    expect(findFor(report.results, "EEP-DEVX-01", "pack-b")?.status).toBe("fail");
+    expect(report.failedBlocking).toBe(1);
+    expect(findFor(report.results, "EEP-DEVX-01", "pack-a")?.detail).not.toContain(
+      "applies to all packs",
+    );
+  });
+
+  it("flips every pack's row when no pack is named, and says so", async () => {
+    const dir = fixtureWith(waiverFor("EEP-DEVX-01"));
+
+    const report = await runVerify(dir);
+    const rows = report.results.filter((result) => result.law === "EEP-DEVX-01");
+
+    expect(rows).toHaveLength(2);
+    for (const row of rows) {
+      expect(row.status).toBe("waived");
+      expect(row.detail).toContain("(applies to all packs)");
+      expect(row.detail).toContain("original: absent.txt does not exist");
+    }
+    expect(report.failedBlocking).toBe(0);
+  });
+
+  it("prefers the pack scoped waiver over an unscoped one for the same law", async () => {
+    const dir = fixtureWith(
+      `${waiverFor("EEP-DEVX-01", "pack-a")}${waiverFor("EEP-DEVX-01").replace(
+        "The legacy service",
+        "The blunt instrument",
+      )}`,
+    );
+
+    const report = await runVerify(dir);
+    const scoped = findFor(report.results, "EEP-DEVX-01", "pack-a");
+
+    expect(scoped?.status).toBe("waived");
+    expect(scoped?.detail).toContain("The legacy service");
+    expect(scoped?.detail).not.toContain("applies to all packs");
+    expect(findFor(report.results, "EEP-DEVX-01", "pack-b")?.detail).toContain(
+      "The blunt instrument",
+    );
   });
 });
 

@@ -39,6 +39,27 @@ const SECRET_PATTERNS: { family: string; pattern: RegExp }[] = [
   },
 ];
 
+/**
+ * Builtins whose subject is the repository, never one component of it.
+ *
+ * A credential is a repository wide fact: scoping the scan to one component would let the same leak
+ * pass in the directory next door. Documentation style and frontmatter are repository wide for the
+ * same reason, one level up: they are laws about the prose a repository publishes, and a composed
+ * repository's root README is nobody's component and would otherwise go unchecked by every pack.
+ *
+ * These three always run from the repository root, whatever workdir the pack that carries them
+ * declares, which also means two packs carrying the same command are asking the identical question
+ * and the answer can be computed once (see commands/verify.ts).
+ */
+const REPO_WIDE_BUILTINS = new Set(["secrets-scan", "docs-style", "docs-frontmatter"]);
+
+// A path argument under .github is repository level by nature: CI configuration lives at the root of
+// a repository, one copy for the whole tree, so a workdir must not send a check looking for a
+// component local copy that should not exist. Same exemption as the repo wide builtins above, but
+// stated on the argument rather than the builtin, because the builtin itself (file-contains-any)
+// is perfectly component scoped when pointed anywhere else.
+const ROOT_ANCHORED_PREFIX = ".github";
+
 type ParsedCommand = { name: string; first: string; rest: string };
 
 function parseCommand(command: string): ParsedCommand {
@@ -62,6 +83,39 @@ function unquote(value: string): string {
   const last = value[value.length - 1];
   if ((first === '"' || first === "'") && last === first) return value.slice(1, -1);
   return value;
+}
+
+/** Whether this builtin command is a fact about the whole repository. See REPO_WIDE_BUILTINS. */
+export function isRepoWideBuiltin(command: string): boolean {
+  return REPO_WIDE_BUILTINS.has(parseCommand(command).name);
+}
+
+function requote(value: string): string {
+  return /\s/.test(value) ? `'${value}'` : value;
+}
+
+/**
+ * Rewrites a builtin's path argument to sit under `workdir`, so the check runs against that
+ * component while every path it reports stays relative to the repository root.
+ *
+ * Rewriting the argument, rather than running the builtin with the component as its base directory,
+ * is what makes a failure name `backend/README.md` instead of a bare `README.md` that could mean
+ * either component. Returns the command untouched for a repo wide builtin, for a .github path, for
+ * an empty workdir, and for a command with no path argument at all.
+ */
+export function scopeBuiltinToWorkdir(command: string, workdir: string): string {
+  if (workdir === "") return command;
+  const { name, first, rest } = parseCommand(command);
+  if (REPO_WIDE_BUILTINS.has(name)) return command;
+
+  const path = unquote(first);
+  if (path === "") return command;
+  if (path === ROOT_ANCHORED_PREFIX || path.startsWith(`${ROOT_ANCHORED_PREFIX}/`)) return command;
+
+  // Joined with a literal slash rather than path.join: this value is handed to fast-glob patterns
+  // as well as to the filesystem, and glob patterns are always posix separated.
+  const scoped = requote(`${workdir}/${path}`);
+  return rest === "" ? `${name} ${scoped}` : `${name} ${scoped} ${rest}`;
 }
 
 /**

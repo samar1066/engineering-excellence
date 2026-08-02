@@ -7,6 +7,29 @@ import { repoRoot } from "../src/lib/schema.js";
 
 const corpusDir = repoRoot();
 
+/**
+ * Roadmap tokens are read out of the corpus, never written down here.
+ *
+ * These cases are about the alias and roadmap machinery, not about which packs happen to exist this
+ * week, and every literal token name written into an assertion is a fuse: it burns down the day
+ * that pack ships. One already did, mid session, when a sibling landed the pack behind `node`.
+ */
+function comingSoonTokens(): string[] {
+  const { comingSoon } = listCapabilities(corpusDir);
+  expect(
+    comingSoon.length,
+    "the roadmap has no unbuilt packs left to test against",
+  ).toBeGreaterThan(1);
+  return comingSoon;
+}
+
+function anAvailableToken(): string {
+  const { available } = listCapabilities(corpusDir);
+  const first = available[0];
+  expect(first, "the corpus carries no packs at all").toBeDefined();
+  return first?.token ?? "";
+}
+
 describe("resolveFrameworks", () => {
   it("maps a friendly token onto the pack it names", () => {
     expect(resolveFrameworks(["fastapi"], corpusDir)).toEqual({
@@ -24,20 +47,37 @@ describe("resolveFrameworks", () => {
     });
   });
 
-  // Tokens whose packs no wave of the current roadmap builds. Naming a token that is about to ship
-  // would make these assertions expire the day its pack lands, and the subject here is the alias
-  // and roadmap machinery, not which packs happen to exist this week.
   it("resolves case insensitively and reports a known but unbuilt pack as coming soon", () => {
-    expect(resolveFrameworks(["ANGULAR"], corpusDir)).toEqual({
+    const token = comingSoonTokens()[0] ?? "";
+
+    expect(resolveFrameworks([token.toUpperCase()], corpusDir)).toEqual({
       packs: [],
-      comingSoon: ["angular"],
+      comingSoon: [token],
       unknown: [],
     });
   });
 
+  /**
+   * Every spelling of one unbuilt pack collapses to that pack's primary token.
+   *
+   * The group is discovered rather than named: every valid token is resolved, the ones landing on
+   * the same coming soon token are collected, and the first group with more than one spelling is
+   * the aliased pack. That keeps the case alive as packs ship and aliases are added.
+   */
   it("reports every alias of an unbuilt pack under one primary token", () => {
-    const resolved = resolveFrameworks(["java", "spring"], corpusDir);
-    expect(resolved.comingSoon).toEqual(["java"]);
+    const spellingsByPrimary = new Map<string, string[]>();
+    for (const token of validTokens(corpusDir)) {
+      const primary = resolveFrameworks([token], corpusDir).comingSoon[0];
+      if (primary === undefined) continue;
+      spellingsByPrimary.set(primary, [...(spellingsByPrimary.get(primary) ?? []), token]);
+    }
+
+    const aliased = [...spellingsByPrimary.entries()].find(([, spellings]) => spellings.length > 1);
+    expect(aliased, "no unbuilt pack has more than one spelling").toBeDefined();
+    const [primary, spellings] = aliased ?? ["", []];
+
+    const resolved = resolveFrameworks(spellings, corpusDir);
+    expect(resolved.comingSoon).toEqual([primary]);
     expect(resolved.packs).toEqual([]);
   });
 
@@ -48,9 +88,13 @@ describe("resolveFrameworks", () => {
   });
 
   it("splits a mixed list into available packs and coming soon tokens, in the typed order", () => {
-    const resolved = resolveFrameworks(["fastapi", "java", "angular"], corpusDir);
-    expect(resolved.packs).toEqual(["python-fastapi"]);
-    expect(resolved.comingSoon).toEqual(["java", "angular"]);
+    const available = anAvailableToken();
+    const [first, second] = comingSoonTokens();
+
+    const resolved = resolveFrameworks([available, first ?? "", second ?? ""], corpusDir);
+
+    expect(resolved.packs).toEqual(resolveFrameworks([available], corpusDir).packs);
+    expect(resolved.comingSoon).toEqual([first, second]);
     expect(resolved.unknown).toEqual([]);
   });
 
@@ -95,10 +139,22 @@ describe("listCapabilities", () => {
     expect(available).toContainEqual({ token: "fastapi", pack: "python-fastapi" });
   });
 
+  // Asserted as a property of every coming soon token, not against a named one: each has to be a
+  // token the CLI still accepts, and none may name a pack the corpus already carries.
   it("reports the roadmap tokens with no pack in the corpus as coming soon", () => {
-    const { comingSoon } = listCapabilities(corpusDir);
+    const { available, comingSoon } = listCapabilities(corpusDir);
+    const availablePacks = new Set(available.map((entry) => entry.pack));
+
     expect(comingSoon.length).toBeGreaterThan(0);
-    expect(comingSoon).toContain("angular");
+    for (const token of comingSoon) {
+      expect(validTokens(corpusDir)).toContain(token);
+      expect(resolveFrameworks([token], corpusDir)).toEqual({
+        packs: [],
+        comingSoon: [token],
+        unknown: [],
+      });
+      expect(availablePacks.has(token)).toBe(false);
+    }
   });
 
   it("never lists the same token as both available and coming soon", () => {

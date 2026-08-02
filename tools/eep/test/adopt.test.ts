@@ -77,12 +77,15 @@ describe("runAdopt", () => {
     expect(existsSync(join(targetDir, ".git", "hooks", "pre-commit"))).toBe(false);
   });
 
+  // Asserted as "the message names the supported packs", not as a fixed list: the list is every
+  // pack the corpus carries, so pinning it to today's corpus would turn this red every time a pack
+  // lands, for a reason that has nothing to do with what it is testing.
   it("rejects when no pack is detected, naming the supported packs", async () => {
     const targetDir = newTargetDir("eep-adopt-nomatch-");
 
     await expect(
       runAdopt({ targetDir, corpusDir, profile: "evolving", yes: true }),
-    ).rejects.toThrow("no pack detected; supported packs: python-fastapi");
+    ).rejects.toThrow(/no pack detected; supported packs: .*python-fastapi/);
   });
 
   it("writes eep.yaml that parses to the profile and detected packs", async () => {

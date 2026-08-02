@@ -8,6 +8,10 @@ import { parse as parseYaml } from "yaml";
 
 export type Waiver = {
   law: string;
+  // Which pack's row this waiver suppresses. Optional: absent means every pack's row for this law,
+  // which is the blunter instrument, so a waiver for one component's legacy service has to name
+  // that component rather than quietly excusing every other component of the same law.
+  pack?: string;
   scope: string;
   justification: string;
   owner: string;

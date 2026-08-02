@@ -45,8 +45,22 @@ describe("resolveLaws", () => {
     expect(laws.find((law) => law.id === "EEP-DOCS-03")?.waivable).toBe(true);
   });
 
-  it("carries the pack manifest's workdir on every one of that pack's entries", () => {
+  // The pack manifest declares a workdir; whether this repository has one is decided at sync time
+  // and recorded in the lock. resolveLaws is told, never asks, so a caller with no lock (the agent
+  // file generator) gets root scoped entries even for a pack whose manifest names a directory.
+  it("leaves workdir null when the caller pins nothing, whatever the manifest declares", () => {
     const laws = resolveLaws(["python-fastapi"], "greenfield", root);
+
+    expect(laws.length).toBeGreaterThan(0);
+    for (const law of laws) {
+      expect(law.workdir).toBeNull();
+    }
+  });
+
+  it("carries the caller's pinned workdir on every one of that pack's entries", () => {
+    const pinned = new Map([["python-fastapi", "backend"]]);
+
+    const laws = resolveLaws(["python-fastapi"], "greenfield", root, pinned);
 
     expect(laws.length).toBeGreaterThan(0);
     for (const law of laws) {
@@ -212,10 +226,11 @@ describe("resolveLaws across two packs", () => {
     expect(backwards.map((law) => `${law.id} ${law.pack}`)).toEqual(keys);
   });
 
-  it("carries each pack's own workdir, and null for a pack that declares none", () => {
+  it("carries each pack's own pinned workdir, and null for a pack with none pinned", () => {
     const corpus = corpusWith(twoPacks);
+    const pinned = new Map([["beta-pack", "beta"]]);
 
-    const laws = resolveLaws(["alpha-pack", "beta-pack"], "greenfield", corpus);
+    const laws = resolveLaws(["alpha-pack", "beta-pack"], "greenfield", corpus, pinned);
 
     for (const law of laws.filter((entry) => entry.pack === "beta-pack")) {
       expect(law.workdir).toBe("beta");
