@@ -11,7 +11,7 @@ updated: 2026-08-01
 
 # python-fastapi
 
-A Tier 1 stack pack that binds the Engineering Excellence Program, program version 0.1.0, to Python 3.11 services built on FastAPI. A repository matches this pack when its `pyproject.toml` contains `fastapi`. The pack turns the program's laws into concrete practice for this stack: a golden path document, a runnable scaffold with a worked example feature, blessed tool configurations, and executable checks that prove each law it implements.
+A Tier 1 stack pack that binds the Engineering Excellence Program, program version 0.2.0, to Python 3.11 services built on FastAPI. A repository matches this pack when its `pyproject.toml` contains `fastapi`. The pack turns the program's laws into concrete practice for this stack: a golden path document, a runnable scaffold with a worked example feature, blessed tool configurations, and executable checks that prove each law it implements.
 
 ## What this pack gives you
 

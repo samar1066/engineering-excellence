@@ -1,10 +1,9 @@
 # ci: the gate every change passes, owned by the github-actions pack.
 #
 # This file supersedes the generic component matrix ci.yml a composed init writes when no delivery
-# pack is selected: same intent, real per component gates. Every stack pack also scaffolds a
-# .github/workflows/ci.yml inside its own component directory, which is where that pack's own
-# EEP-DLV-01 check reads it. GitHub reads workflows only from the repository root, so this file is
-# the one that actually runs.
+# pack is selected: same intent, real per component gates. This file is the repository's root CI;
+# EEP-DLV-01 always reads .github/workflows at the repository root, never inside a component
+# directory, and composed init skips the .github a stack pack's own scaffold ships.
 #
 # Each component job checks the repository out first and then guards its real steps on hashFiles.
 # The guard is deliberately not on the job's own if: a job level condition is evaluated before any

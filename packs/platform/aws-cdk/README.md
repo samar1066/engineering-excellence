@@ -11,7 +11,7 @@ updated: 2026-08-02
 
 # aws-cdk
 
-A Tier 1 platform pack that binds the Engineering Excellence Program, program version 0.1.0, to AWS infrastructure declared with the AWS CDK v2 in TypeScript. A repository matches this pack when it carries an `infra/cdk.json`. The pack gives a project its runtime: a CDK application that deploys the backend api component to AWS Fargate behind an application load balancer, in three stages, `dev`, `uat`, and `prod`, from a single parameterized stack. The containers pack also builds frontend and node service images, and deploying those as additional Fargate services is a documented later revision of this stack rather than something it ships today. It is a platform pack rather than a stack pack, so it sits beside a stack pack (python-fastapi, typescript-node, react) rather than replacing one, and it scaffolds into the `infra` component directory.
+A Tier 1 platform pack that binds the Engineering Excellence Program, program version 0.2.0, to AWS infrastructure declared with the AWS CDK v2 in TypeScript. A repository matches this pack when it carries an `infra/cdk.json`. The pack gives a project its runtime: a CDK application that deploys the backend api component to AWS Fargate behind an application load balancer, in three stages, `dev`, `uat`, and `prod`, from a single parameterized stack. The containers pack also builds frontend and node service images, and deploying those as additional Fargate services is a documented later revision of this stack rather than something it ships today. It is a platform pack rather than a stack pack, so it sits beside a stack pack (python-fastapi, typescript-node, react) rather than replacing one, and it scaffolds into the `infra` component directory.
 
 ## What this pack gives you
 

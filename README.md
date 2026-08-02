@@ -46,7 +46,7 @@ One line, one repository, five packs. What appears in `shop/`:
 
 Re run the token command inside the project at any time with a different list, and eep adds or removes frameworks to match.
 
-Naming one framework (`npx engineering-excellence init shop fastapi`) keeps that single application at the repository root. Naming several composes them into one repository, each in its own component directory.
+Naming no framework (`npx engineering-excellence init shop`) keeps that single application at the repository root. Naming one or more, as above, composes them into one repository, each in its own component directory.
 
 ## What we support
 

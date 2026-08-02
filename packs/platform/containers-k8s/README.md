@@ -11,7 +11,7 @@ updated: 2026-08-02
 
 # containers-k8s
 
-A Tier 1 platform pack that binds the Engineering Excellence Program, program version 0.1.0, to container definitions for a composed repository. A repository matches this pack when it carries a `docker-compose.dev.yaml` at its root. Unlike a stack pack, it scaffolds no application and claims no component directory: it augments whatever components the stack packs put in place with one image definition each, a compose file that starts them together, and a single ignore file governing every build. It implements exactly one law and is honest about the rest.
+A Tier 1 platform pack that binds the Engineering Excellence Program, program version 0.2.0, to container definitions for a composed repository. A repository matches this pack when it carries a `docker-compose.dev.yaml` at its root. Unlike a stack pack, it scaffolds no application and claims no component directory: it augments whatever components the stack packs put in place with one image definition each, a compose file that starts them together, and a single ignore file governing every build. It implements exactly one law and is honest about the rest.
 
 ## What this pack gives you
 

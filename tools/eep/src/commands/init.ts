@@ -191,8 +191,10 @@ function corpusComponentDirs(corpusDir: string): Set<string> {
  *
  * Only files named after a component directory some pack claims and this project did not select are
  * dropped. The compose file is deliberately left whole: every service in it sits behind a profile,
- * so a service whose Dockerfile is gone still parses and simply never starts, and rewriting a
- * pack's own YAML from here would put this program in the business of editing pack content.
+ * so the file still parses with a Dockerfile gone. `--profile all up --build` then fails loudly,
+ * naming the missing file, while a single present component's own profile (`--profile backend`)
+ * still builds and starts clean. Rewriting a pack's own YAML from here would put this program in
+ * the business of editing pack content.
  */
 function skipUnselectedComponentFiles(
   unselected: ReadonlySet<string>,

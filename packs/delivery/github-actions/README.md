@@ -11,7 +11,7 @@ updated: 2026-08-02
 
 # github-actions
 
-A Tier 1 delivery pack that binds the Engineering Excellence Program, program version 0.1.0, to GitHub Actions as the continuous integration and promotion pipeline of a repository. A repository matches this pack when `.github/workflows/deploy.yml` exists. Unlike a stack pack it claims no component directory and writes no application code: it contributes the two repository level workflows that gate every change and that promote one built image through dev, then uat, then production on AWS, federating with OpenID Connect so no long lived credential is ever stored.
+A Tier 1 delivery pack that binds the Engineering Excellence Program, program version 0.2.0, to GitHub Actions as the continuous integration and promotion pipeline of a repository. A repository matches this pack when `.github/workflows/deploy.yml` exists. Unlike a stack pack it claims no component directory and writes no application code: it contributes the two repository level workflows that gate every change and that promote one built image through dev, then uat, then production on AWS, federating with OpenID Connect so no long lived credential is ever stored.
 
 ## What this pack gives you
 
