@@ -1,7 +1,6 @@
 {
   "name": "eep-cli",
   "version": "0.1.0",
-  "private": true,
   "description": "Engineering Excellence Program CLI",
   "license": "Apache-2.0",
   "author": "Samar Swami (@samar1066)",
@@ -9,10 +8,12 @@
   "bin": {
     "eep": "./dist/index.js"
   },
+  "files": ["dist", "corpus"],
   "engines": {
     "node": ">=22"
   },
   "scripts": {
+    "prepack": "npm run build && node scripts/bundle-corpus.mjs",
     "build": "tsup src/index.ts --format esm --clean",
     "dev": "tsx src/index.ts",
     "test": "vitest run",

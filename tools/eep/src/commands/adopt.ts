@@ -11,20 +11,28 @@ import { loadPack } from "../lib/pack.js";
 import { vendorInto } from "../lib/vendor.js";
 
 // Deliberately narrower than resolve.ts's Profile: "steady" is reserved and resolveLaws rejects
-// it downstream anyway, so adopt never accepts it as a valid target profile in the first place.
-type AdoptProfile = "greenfield" | "evolving";
+// it downstream anyway, so nothing that writes a lock file accepts it as a target profile in the
+// first place. Shared with the root framework sync, which writes the same lock file.
+export type WritableProfile = "greenfield" | "evolving";
 
 export type AdoptOptions = {
   targetDir: string;
   corpusDir: string;
-  profile: AdoptProfile;
+  profile: WritableProfile;
   yes: boolean;
 };
 
 // Fixed, literal list of what a successful run writes. Printed up front during planning
 // regardless of whether .git turns out to exist; the git hook step below prints its own warning
-// when it cannot honor the last entry, rather than this list silently omitting it.
-const PLANNED_FILES = [".eep/", "AGENTS.md", "CLAUDE.md", "eep.yaml", ".git/hooks/pre-commit"];
+// when it cannot honor the last entry, rather than this list silently omitting it. Shared with the
+// root framework sync, which writes exactly the same set.
+export const PLANNED_FILES = [
+  ".eep/",
+  "AGENTS.md",
+  "CLAUDE.md",
+  "eep.yaml",
+  ".git/hooks/pre-commit",
+];
 
 const HOOK_CONTENT = [
   "#!/bin/sh",
@@ -41,7 +49,7 @@ function listAllPackNames(corpusDir: string): string[] {
   return names.sort();
 }
 
-function printPlan(packs: string[], profile: AdoptProfile): void {
+function printPlan(packs: string[], profile: WritableProfile): void {
   console.log(`eep adopt: detected packs: ${packs.join(", ")}`);
   console.log(`eep adopt: profile: ${profile}`);
   console.log("eep adopt: will write:");
@@ -57,27 +65,36 @@ async function promptProceed(): Promise<string> {
   }
 }
 
-// Requires explicit consent before anything is written. --yes short circuits both branches below;
-// without it, a TTY gets a prompt, and anything else (CI, a pipe, this test suite) is refused
-// outright rather than hanging on stdin input that will never arrive.
-async function confirmOrAbort(yes: boolean): Promise<void> {
+/**
+ * Requires explicit consent before anything is written. --yes short circuits both branches below;
+ * without it, a TTY gets a prompt, and anything else (CI, a pipe, this test suite) is refused
+ * outright rather than hanging on stdin input that will never arrive.
+ *
+ * `verb` names the operation in both refusal messages, so the root framework sync can share this
+ * gate verbatim and still say "sync" where adopt says "adopt".
+ */
+export async function confirmOrAbort(yes: boolean, verb: string): Promise<void> {
   if (yes) return;
   if (!process.stdin.isTTY) {
-    throw new Error("eep: refusing to adopt without --yes in non interactive mode");
+    throw new Error(`eep: refusing to ${verb} without --yes in non interactive mode`);
   }
   const answer = (await promptProceed()).trim();
   if (answer !== "y" && answer !== "Y") {
-    throw new Error("eep: adopt cancelled");
+    throw new Error(`eep: ${verb} cancelled`);
   }
 }
 
-function buildEepYamlContent(profile: AdoptProfile, packs: string[]): string {
+// The human readable record of what was vendored. lock.yaml remains the authority; this file
+// exists so a reader (or an agent) can see the active set without parsing the lock. Shared with
+// the root framework sync so both commands write byte identical content for the same set.
+export function buildEepYamlContent(profile: WritableProfile, packs: string[]): string {
   return stringifyYaml({ profile, packs });
 }
 
 // Installs the pre-commit gate when the target is a git checkout. When it is not, the rest of
 // adoption (vendoring, eep.yaml, the agent files) is still useful on its own, so this warns
-// instead of throwing and lets the caller keep going.
+// instead of throwing and lets the caller keep going. Exported because the root framework sync
+// installs the identical hook; there must be exactly one definition of what the gate runs.
 //
 // ".git exists" is not the same as "a hooks directory can live under it": in a worktree or a
 // submodule checkout, ".git" is a plain file containing a "gitdir: <path>" pointer, not a
@@ -85,7 +102,7 @@ function buildEepYamlContent(profile: AdoptProfile, packs: string[]): string {
 // by the time this function runs, vendorInto/eep.yaml/generateAgentFiles have already succeeded,
 // so that throw would surface as a confusing partial-failure instead of the same clean warn-and
 // continue path the "no .git at all" case already takes.
-function installGitHook(targetDir: string): void {
+export function installGitHook(targetDir: string): void {
   const gitDir = join(targetDir, ".git");
   if (!existsSync(gitDir)) {
     console.warn("eep: no .git directory; pre-commit hook not installed");
@@ -118,7 +135,7 @@ export async function runAdopt(opts: AdoptOptions): Promise<{ packs: string[] }>
   }
 
   printPlan(packs, opts.profile);
-  await confirmOrAbort(opts.yes);
+  await confirmOrAbort(opts.yes, "adopt");
 
   vendorInto(opts.targetDir, opts.corpusDir, packs, opts.profile);
   writeFileSync(join(opts.targetDir, "eep.yaml"), buildEepYamlContent(opts.profile, packs));
@@ -129,7 +146,7 @@ export async function runAdopt(opts: AdoptOptions): Promise<{ packs: string[] }>
   return { packs };
 }
 
-function toAdoptProfile(value: string): AdoptProfile {
+export function toWritableProfile(value: string): WritableProfile {
   if (value === "greenfield" || value === "evolving") return value;
   throw new Error(`eep: unknown profile "${value}"; expected greenfield or evolving`);
 }
@@ -145,7 +162,7 @@ export function register(program: Command): void {
     .option("--yes", "skip the interactive confirmation prompt", false)
     .action(async (options: AdoptCliOptions) => {
       try {
-        const profile = toAdoptProfile(options.profile);
+        const profile = toWritableProfile(options.profile);
         const corpusDir = options.corpus ?? corpusRoot();
         const { packs } = await runAdopt({
           targetDir: process.cwd(),

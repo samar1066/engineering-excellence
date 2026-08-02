@@ -1,1 +1,9 @@
 dist/
+
+# Build artifact: scripts/bundle-corpus.mjs recreates it from the repository root on every pack.
+corpus/
+
+# npm pack output, produced when proving the published consumer path locally.
+*.tgz
+README.md
+LICENSE

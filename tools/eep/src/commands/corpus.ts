@@ -8,9 +8,14 @@ import { repoRoot, validateAgainst } from "../lib/schema.js";
 
 export type Violation = { path: string; line?: number; rule: string; detail: string };
 
+// Build artifacts and third party trees, never corpus source. "corpus" is here for the same reason
+// "dist" is: tools/eep/corpus/ is a copy of this repository's own corpus that scripts/
+// bundle-corpus.mjs writes for the npm package, and validating a copy would report every finding
+// twice, under a path nobody can fix without editing the generator.
 const EXCLUDED_DIRS = [
   "node_modules",
   "dist",
+  "corpus",
   ".git",
   "docs/internal",
   ".superpowers",
