@@ -14,7 +14,7 @@ Run `make test` to run the test suite with coverage.
 
 ## Verify
 
-Run `make verify` to run the full Engineering Excellence Program verification gate.
+Run `make verify` to run the full Engineering Excellence Program verification gate. It runs an installed `eep` when there is one and otherwise falls back to `npx engineering-excellence verify`, so Node 22 is its only extra prerequisite.
 
 ## Run
 

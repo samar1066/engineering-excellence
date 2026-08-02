@@ -89,13 +89,14 @@ async function gitInitAndCommit(projectDir: string): Promise<void> {
   await execa("git", ["commit", "-m", SCAFFOLD_COMMIT_MESSAGE], { cwd: projectDir, env });
 }
 
-// Two lines, and deliberately not `make verify`: that target shells out to a bare `eep`, which is
-// on PATH only once the CLI ships as a package. `make test` is the part of the gate a fresh
-// project can run today, so the second line names the whole gate and how to reach it meanwhile.
+// Two lines: the first is the fastest loop a fresh project can run, the second names the whole
+// gate. Both forms of the gate are spelled out because a bare `eep` is on PATH only after a global
+// install; anyone who reaches this CLI through npx alone runs the npx form (which is also what the
+// scaffold's own `make verify` target and pre-commit hook fall back to).
 function printNextSteps(name: string): void {
   console.log(`eep init: next steps: cd ${name} && make setup && make test`);
   console.log(
-    "eep init: full gate: eep verify (or npx tsx <corpus>/tools/eep/src/index.ts verify) from the project",
+    "eep init: full gate: eep verify (or npx engineering-excellence verify) from the project",
   );
 }
 

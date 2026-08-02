@@ -53,7 +53,9 @@ describe("runSync", () => {
     const hookPath = join(targetDir, ".git", "hooks", "pre-commit");
     expect(existsSync(hookPath)).toBe(true);
     expect(statSync(hookPath).mode & 0o111).not.toBe(0);
-    expect(readFileSync(hookPath, "utf8")).toContain("eep verify --changed");
+    const hookContent = readFileSync(hookPath, "utf8");
+    expect(hookContent).toContain("eep verify --changed");
+    expect(hookContent).toContain("npx -y engineering-excellence");
 
     const parsed = parseYaml(readFileSync(join(targetDir, "eep.yaml"), "utf8"));
     expect(parsed).toEqual({ profile: "evolving", packs: ["python-fastapi"] });

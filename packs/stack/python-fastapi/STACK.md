@@ -104,7 +104,7 @@ Daily work drives through four commands:
 3. `make verify`: runs the full verification gate through the eep CLI, every check in the table below.
 4. `make run`: starts the development server through uvicorn with reload.
 
-`make setup` is the only prerequisite for `make test` and `make run`. `make verify` also requires the eep CLI, which is not a scaffold dependency: without the CLI installed, the fallback gate is `make test` plus the five shell checks from the verification table below.
+`make setup` is the only prerequisite for `make test` and `make run`. `make verify` works for everyone: it runs the eep CLI when one is installed and otherwise falls back to `npx engineering-excellence verify`, so its only extra prerequisite is Node 22.
 
 While iterating, run one file with `uv run pytest tests/api/test_notes_api.py -q` or one test with `-k <name>`. The coverage gate applies to `make test`, not to these targeted runs, so a new red test fails for the right reason instead of tripping the coverage threshold.
 
@@ -132,7 +132,7 @@ Never return error dicts, status tuples, or `None` as a failure signal from a wo
 
 ## What verify checks here
 
-`make verify` runs every check in `checks/manifest.yaml`. The five shell checks are plain commands you can run by hand while iterating; the seven builtin checks are implemented inside the eep CLI and run only through `eep verify`:
+`make verify` runs every check in `checks/manifest.yaml`. The five shell checks are plain commands you can run by hand while iterating; the seven builtin checks are implemented inside the eep CLI and run only through `eep verify`, which `make verify` reaches with or without a local install:
 
 | Law | Kind | Command |
 |-----|------|---------|

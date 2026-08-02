@@ -41,7 +41,11 @@ describe("runAdopt", () => {
     const hookPath = join(targetDir, ".git", "hooks", "pre-commit");
     expect(existsSync(hookPath)).toBe(true);
     expect(statSync(hookPath).mode & 0o111).not.toBe(0);
-    expect(readFileSync(hookPath, "utf8")).toContain("eep verify --changed");
+    const hookContent = readFileSync(hookPath, "utf8");
+    expect(hookContent).toContain("eep verify --changed");
+    // The npx only consumer never has a bare `eep` on PATH; the hook must fall back to the
+    // published package rather than failing the commit outright.
+    expect(hookContent).toContain("npx -y engineering-excellence");
   });
 
   it("adopts a plain directory without git: resolves, writes artifacts, installs no hook", async () => {

@@ -63,7 +63,7 @@ It declines one law: EEP-DOCS-03, with the recorded reason "Corpus scoped law; c
 
 ## Standalone use
 
-Copy this folder plus CONSTITUTION.md into any repository and point your agent at STACK.md; the eep CLI is an accelerator, not a requirement. The fallback is what makes that true: without the CLI, the gate is `make test` plus the five shell checks in `checks/manifest.yaml`, which are plain commands you can run by hand; the seven builtin checks are implemented inside the CLI and run only through `eep verify`. The scaffold's `pyproject.toml` ships with a `{{project_name}}` placeholder, so `make setup` and `make test` work once `eep init` has rendered it or you have substituted the token by hand; beyond that, uv and Python 3.11 are the only prerequisites.
+Copy this folder plus CONSTITUTION.md into any repository and point your agent at STACK.md; the eep CLI is an accelerator, not a requirement. The scaffold's `make verify` reaches the full gate either way: it runs an installed `eep` when there is one and otherwise falls back to `npx engineering-excellence verify`, so Node 22 is its only extra prerequisite. Without Node at all, the gate is `make test` plus the five shell checks in `checks/manifest.yaml`, which are plain commands you can run by hand; the seven builtin checks are implemented inside the CLI and run only through `eep verify`. The scaffold's `pyproject.toml` ships with a `{{project_name}}` placeholder, so `make setup` and `make test` work once `eep init` has rendered it or you have substituted the token by hand; beyond that, uv and Python 3.11 are the only prerequisites.
 
 ## Related
 

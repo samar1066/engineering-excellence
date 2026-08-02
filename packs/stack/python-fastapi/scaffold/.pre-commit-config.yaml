@@ -8,6 +8,6 @@ repos:
     hooks:
       - id: eep-verify
         name: eep verify (changed files)
-        entry: eep verify --changed
+        entry: bash -c 'if command -v eep >/dev/null 2>&1; then exec eep verify --changed; else exec npx -y engineering-excellence verify --changed; fi'
         language: system
         pass_filenames: false

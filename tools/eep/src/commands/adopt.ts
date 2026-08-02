@@ -34,10 +34,19 @@ export const PLANNED_FILES = [
   ".git/hooks/pre-commit",
 ];
 
+// The gate must run for a consumer who only ever reaches this CLI through npx, so a bare `eep` is
+// never assumed to be on PATH: it is used when present (fast, no network) and the published
+// package answers otherwise. Kept byte identical in intent to the pre-commit framework hook in
+// packs/stack/python-fastapi/templates/config/pre-commit-config.yaml, which this raw hook stands
+// in for whenever the framework has not overwritten .git/hooks/pre-commit.
 const HOOK_CONTENT = [
   "#!/bin/sh",
   "# Installed by eep adopt. The gate runs before the commit exists.",
-  "eep verify --changed || exit 1",
+  "if command -v eep >/dev/null 2>&1; then",
+  "  eep verify --changed || exit 1",
+  "else",
+  "  npx -y engineering-excellence verify --changed || exit 1",
+  "fi",
   "",
 ].join("\n");
 
