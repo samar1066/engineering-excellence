@@ -1,5 +1,13 @@
 # Engineering Excellence Program
 
+[![npm version](https://img.shields.io/npm/v/engineering-excellence)](https://www.npmjs.com/package/engineering-excellence)
+[![ci](https://github.com/samar1066/engineering-excellence/actions/workflows/ci.yml/badge.svg)](https://github.com/samar1066/engineering-excellence/actions/workflows/ci.yml)
+[![npm provenance](https://img.shields.io/badge/provenance-signed-brightgreen)](https://www.npmjs.com/package/engineering-excellence)
+[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/samar1066/engineering-excellence/badge)](https://securityscorecards.dev/viewer/?uri=github.com/samar1066/engineering-excellence)
+[![node](https://img.shields.io/node/v/engineering-excellence)](https://www.npmjs.com/package/engineering-excellence)
+[![downloads](https://img.shields.io/npm/dm/engineering-excellence)](https://www.npmjs.com/package/engineering-excellence)
+[![license](https://img.shields.io/npm/l/engineering-excellence)](LICENSE)
+
 One command turns any repository into a place where AI coding agents build
 software the right way. You pick your frameworks; eep installs the doctrine,
 generates the agent instructions, and gates every commit with machine checks.
