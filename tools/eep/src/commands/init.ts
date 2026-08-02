@@ -4,6 +4,8 @@ import type { Command } from "commander";
 import { execa } from "execa";
 import fg from "fast-glob";
 import { corpusRoot } from "../lib/corpus-root.js";
+import { invocation } from "../lib/eep-on-path.js";
+import { offerGlobalInstall } from "../lib/install-offer.js";
 import { runAdopt } from "./adopt.js";
 
 export type InitOptions = {
@@ -11,6 +13,9 @@ export type InitOptions = {
   targetDir: string;
   corpusDir: string;
   pack?: string;
+  // Omitted means "offer it". Only an explicit false (--no-install-offer) silences both the
+  // prompt and the hint, which is what CI and scripted runs want.
+  installOffer?: boolean;
 };
 
 const NAME_PATTERN = /^[a-z][a-z0-9_]*$/;
@@ -90,14 +95,13 @@ async function gitInitAndCommit(projectDir: string): Promise<void> {
 }
 
 // Two lines: the first is the fastest loop a fresh project can run, the second names the whole
-// gate. Both forms of the gate are spelled out because a bare `eep` is on PATH only after a global
-// install; anyone who reaches this CLI through npx alone runs the npx form (which is also what the
-// scaffold's own `make verify` target and pre-commit hook fall back to).
+// gate. The gate is named in exactly one form, the one this shell can run: a bare `eep` is on PATH
+// only after a global install, and anyone who reached this CLI through npx alone runs the npx form
+// (which is also what the scaffold's own `make verify` target and pre-commit hook fall back to).
+// Printing both, as this once did, left every reader to work out which half applied to them.
 function printNextSteps(name: string): void {
   console.log(`eep init: next steps: cd ${name} && make setup && make test`);
-  console.log(
-    "eep init: full gate: eep verify (or npx engineering-excellence verify) from the project",
-  );
+  console.log(`eep init: full gate: ${invocation()} verify from the project`);
 }
 
 // Failure recovery for everything runInit does once projectDir is guaranteed to exist. Without
@@ -126,6 +130,9 @@ function cleanupProjectDir(projectDir: string, existedBefore: boolean): void {
  * If copying the scaffold, the git steps, or adopt fails, projectDir is cleaned up (see
  * cleanupProjectDir) and the original error is rethrown with "; cleaned up <projectDir>"
  * appended to its message, so a retry never has to manually delete a half built directory first.
+ *
+ * A complete run closes by offering the global install that makes the bare `eep` in its own next
+ * steps true, unless installOffer is false. See lib/install-offer.ts.
  */
 export async function runInit(opts: InitOptions): Promise<void> {
   validateName(opts.name);
@@ -156,9 +163,14 @@ export async function runInit(opts: InitOptions): Promise<void> {
     }
     throw new Error(`${String(error)}; cleaned up ${projectDir}`);
   }
+
+  // Outside the cleanup guarded block on purpose. The catch above rethrows, so this runs only
+  // after a complete success, and an offer to install a convenience shim can never reach the path
+  // that deletes the project it just built.
+  if (opts.installOffer !== false) await offerGlobalInstall();
 }
 
-type InitCliOptions = { pack: string; dir: string };
+type InitCliOptions = { pack: string; dir: string; installOffer: boolean };
 
 export function register(program: Command): void {
   program
@@ -167,6 +179,7 @@ export function register(program: Command): void {
     .argument("<name>", "project name: lowercase letters, digits, underscores")
     .option("--pack <pack>", "which corpus pack to scaffold from", DEFAULT_PACK)
     .option("--dir <target>", "directory to create the project under", process.cwd())
+    .option("--no-install-offer", "skip the global install offer and its hint (CI and scripts)")
     .action(async (name: string, options: InitCliOptions) => {
       try {
         await runInit({
@@ -174,6 +187,7 @@ export function register(program: Command): void {
           targetDir: options.dir,
           corpusDir: corpusRoot(),
           pack: options.pack,
+          installOffer: options.installOffer,
         });
       } catch (error) {
         console.error(error instanceof Error ? error.message : String(error));

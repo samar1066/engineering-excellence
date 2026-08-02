@@ -1,16 +1,64 @@
-import { existsSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { execa } from "execa";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { parse as parseYaml } from "yaml";
 import { capabilityScreenLines, runSync } from "../src/commands/root.js";
+import { TIP_LINE } from "../src/lib/install-offer.js";
 import { repoRoot } from "../src/lib/schema.js";
 
 const corpusDir = repoRoot();
 
 function newTargetDir(prefix: string): string {
   return mkdtempSync(join(tmpdir(), prefix));
+}
+
+// This machine's PATH with every directory that carries an eep executable removed. Pinning it is
+// what makes the guidance assertions below deterministic: whether the developer running this suite
+// happens to have done a global install is otherwise visible in the output under test.
+function pathWithoutEep(): string {
+  return (process.env.PATH ?? "")
+    .split(delimiter)
+    .filter((entry) => entry !== "" && !existsSync(join(entry, "eep")))
+    .join(delimiter);
+}
+
+// The same PATH with a stand in for npm's global shim prepended. Never executed: the resolver only
+// reads its name, type, and mode.
+function pathWithFakeEep(): string {
+  const dir = newTargetDir("eep-fake-bin-");
+  const file = join(dir, "eep");
+  writeFileSync(file, "#!/bin/sh\nexit 0\n");
+  chmodSync(file, 0o755);
+  return [dir, pathWithoutEep()].join(delimiter);
+}
+
+async function withPath<T>(value: string, fn: () => T | Promise<T>): Promise<T> {
+  const original = process.env.PATH;
+  process.env.PATH = value;
+  try {
+    return await fn();
+  } finally {
+    if (original === undefined) {
+      delete process.env.PATH;
+    } else {
+      process.env.PATH = original;
+    }
+  }
+}
+
+async function captureLog(fn: () => Promise<void>): Promise<string> {
+  const lines: string[] = [];
+  const spy = vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+    lines.push(args.map((arg) => String(arg)).join(" "));
+  });
+  try {
+    await fn();
+  } finally {
+    spy.mockRestore();
+  }
+  return lines.join("\n");
 }
 
 // The one sanctioned git use in this suite: initializing a throwaway fixture directory under the
@@ -179,9 +227,11 @@ describe("runSync", () => {
 });
 
 describe("capabilityScreenLines", () => {
-  it("names what eep is, what ships today, and what is on the roadmap", () => {
+  it("names what eep is, what ships today, and what is on the roadmap", async () => {
     const targetDir = newTargetDir("eep-capabilities-bare-");
-    const screen = capabilityScreenLines(corpusDir, targetDir).join("\n");
+    const screen = await withPath(pathWithoutEep(), () =>
+      capabilityScreenLines(corpusDir, targetDir).join("\n"),
+    );
 
     expect(screen).toContain("Available now:");
     expect(screen).toContain("fastapi (python-fastapi)");
@@ -192,14 +242,90 @@ describe("capabilityScreenLines", () => {
     expect(screen).not.toContain("Detected in this project");
   });
 
-  it("names the detected framework and the command that adopts it", () => {
+  it("names the detected framework and the command that adopts it", async () => {
     const targetDir = newTargetDir("eep-capabilities-detected-");
     writeFastApiPyproject(targetDir);
 
-    const screen = capabilityScreenLines(corpusDir, targetDir).join("\n");
+    const screen = await withPath(pathWithoutEep(), () =>
+      capabilityScreenLines(corpusDir, targetDir).join("\n"),
+    );
 
     expect(screen).toContain(
       "Detected in this project: fastapi. Run: npx engineering-excellence fastapi",
     );
+  });
+
+  // A global install user typed a bare `eep` to reach this screen, so every command on it is
+  // printed in the form they just used.
+  it("prints the bare command form when eep resolves on PATH", async () => {
+    const targetDir = newTargetDir("eep-capabilities-onpath-");
+    writeFastApiPyproject(targetDir);
+
+    const screen = await withPath(pathWithFakeEep(), () =>
+      capabilityScreenLines(corpusDir, targetDir).join("\n"),
+    );
+
+    expect(screen).toContain("  eep fastapi");
+    expect(screen).toContain("Detected in this project: fastapi. Run: eep fastapi");
+    expect(screen).not.toContain("npx engineering-excellence");
+  });
+});
+
+/**
+ * The bug this covers: a consumer who reached the CLI through npx was told to run `eep verify`,
+ * a command their shell does not have. Guidance now names whichever form actually works, and the
+ * run ends by offering the global install that would make the short form true.
+ */
+describe("invocation aware guidance and the global install offer", () => {
+  it("prints the npx form and one install hint when eep is not on PATH", async () => {
+    const targetDir = newTargetDir("eep-sync-guidance-npx-");
+
+    const output = await withPath(pathWithoutEep(), () =>
+      captureLog(async () => {
+        await runSync({ targetDir, corpusDir, tokens: ["fastapi"], yes: true });
+      }),
+    );
+
+    expect(output).toContain("npx engineering-excellence verify");
+    expect(output).toContain("npx engineering-excellence explain <LAW-ID>");
+    expect(output).not.toContain("eep verify");
+    expect(output).toContain(TIP_LINE);
+  });
+
+  it("prints the bare form and no hint when eep is on PATH", async () => {
+    const targetDir = newTargetDir("eep-sync-guidance-bare-");
+
+    const output = await withPath(pathWithFakeEep(), () =>
+      captureLog(async () => {
+        await runSync({ targetDir, corpusDir, tokens: ["fastapi"], yes: true });
+      }),
+    );
+
+    expect(output).toContain("2. eep verify 3. eep explain <LAW-ID>");
+    expect(output).not.toContain("npx engineering-excellence");
+    expect(output).not.toContain(TIP_LINE);
+    expect(output).not.toContain("tip:");
+  });
+
+  // What CI and scripted runs pass: the guidance still adapts, but nothing offers to change the
+  // machine and no hint clutters the transcript.
+  it("suppresses the hint entirely when the install offer is turned off", async () => {
+    const targetDir = newTargetDir("eep-sync-guidance-nooffer-");
+
+    const output = await withPath(pathWithoutEep(), () =>
+      captureLog(async () => {
+        await runSync({
+          targetDir,
+          corpusDir,
+          tokens: ["fastapi"],
+          yes: true,
+          installOffer: false,
+        });
+      }),
+    );
+
+    expect(output).toContain("npx engineering-excellence verify");
+    expect(output).not.toContain(TIP_LINE);
+    expect(output).not.toContain("tip:");
   });
 });

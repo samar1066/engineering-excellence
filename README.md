@@ -8,6 +8,16 @@ generates the agent instructions, and gates every commit with machine checks.
 npx engineering-excellence fastapi
 ```
 
+## Install
+
+1. **Zero install.** Run everything through `npx engineering-excellence ...`
+   and you are always on the current published version.
+2. **One global install.** `npm install -g engineering-excellence` once, and
+   the command is simply `eep`: `eep verify`, `eep explain EEP-SEC-01`.
+
+At the end of a sync the CLI offers that global install, and prints every next
+step in the form your shell can actually run.
+
 Pick several at once, space separated, and re run the command any time with a
 different list to add or remove frameworks:
 

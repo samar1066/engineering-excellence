@@ -4,6 +4,7 @@ import type { Command } from "commander";
 import { parse as parseYaml } from "yaml";
 import { corpusRoot } from "../lib/corpus-root.js";
 import { detectPacks } from "../lib/detect.js";
+import { invocation } from "../lib/eep-on-path.js";
 import {
   listCapabilities,
   resolveFrameworks,
@@ -11,6 +12,7 @@ import {
   validTokens,
 } from "../lib/frameworks.js";
 import { generateAgentFiles } from "../lib/generate.js";
+import { offerGlobalInstall } from "../lib/install-offer.js";
 import { vendorInto } from "../lib/vendor.js";
 import {
   buildEepYamlContent,
@@ -29,6 +31,9 @@ export type SyncOptions = {
   // existing lock file, or evolving when there is none. See resolveProfile.
   profile?: WritableProfile;
   yes: boolean;
+  // Omitted means "offer it". Only an explicit false (--no-install-offer) silences both the
+  // prompt and the hint, which is what CI and scripted runs want.
+  installOffer?: boolean;
 };
 
 export type SyncResult = {
@@ -42,11 +47,16 @@ const DEFAULT_PROFILE: WritableProfile = "evolving";
 const WHAT_EEP_IS =
   "eep vendors engineering laws, executable checks, and generated agent instructions into this directory.";
 
-const USAGE_EXAMPLES = [
-  "  npx engineering-excellence fastapi",
-  "  npx engineering-excellence fastapi node angular",
-  "  Add or drop a framework by running the command again with the new full list.",
-];
+// Built per call rather than fixed at module load: the examples are printed in whichever form the
+// reader's shell can actually run (see lib/eep-on-path.ts).
+function usageExamples(): string[] {
+  const eep = invocation();
+  return [
+    `  ${eep} fastapi`,
+    `  ${eep} fastapi node angular`,
+    "  Add or drop a framework by running the command again with the new full list.",
+  ];
+}
 
 /**
  * The profile this sync writes.
@@ -83,11 +93,14 @@ function printPlan(packs: string[], profile: WritableProfile): void {
 }
 
 // The three commands that matter the moment a sync lands: set the project up, run the gate, and
-// look up any law the gate names.
+// look up any law the gate names. Each is printed in the form this shell can run: a consumer who
+// reached this CLI through npx has no bare `eep`, and telling them to run one was the whole defect
+// this addresses.
 function printNextSteps(packs: string[], profile: WritableProfile): void {
+  const eep = invocation();
   console.log(`eep: active set: ${packs.join(", ")} under profile ${profile}`);
   console.log(
-    "eep: next: 1. make setup, or your own project setup 2. eep verify 3. eep explain <LAW-ID>",
+    `eep: next: 1. make setup, or your own project setup 2. ${eep} verify 3. ${eep} explain <LAW-ID>`,
   );
 }
 
@@ -108,13 +121,13 @@ export function capabilityScreenLines(corpusDir: string, targetDir: string): str
     lines.push("", "In development:", `  ${comingSoon.join(", ")}`);
   }
 
-  lines.push("", "Usage:", ...USAGE_EXAMPLES);
+  lines.push("", "Usage:", ...usageExamples());
 
   const detected = tokensForPacks(detectPacks(targetDir, corpusDir));
   if (detected.length > 0) {
     lines.push(
       "",
-      `Detected in this project: ${detected.join(", ")}. Run: npx engineering-excellence ${detected.join(" ")}`,
+      `Detected in this project: ${detected.join(", ")}. Run: ${invocation()} ${detected.join(" ")}`,
     );
   }
 
@@ -140,6 +153,10 @@ function rejectUnknownTokens(unknown: string[], corpusDir: string): void {
  * only an empty remainder is fatal. Detection never gates the result: naming a framework is a
  * declaration of intent, and a user may add a pack before writing the first line of code it
  * governs.
+ *
+ * A successful sync closes by naming the next commands in a form this shell can run, then offers
+ * the global install that would make the short form true, unless installOffer is false. See
+ * lib/install-offer.ts.
  *
  * Re-running with a different list is the whole add and remove story: vendorInto rewrites .eep to
  * exactly the requested set (preserving the consumer's waivers), eep.yaml is rewritten to match,
@@ -170,10 +187,13 @@ export async function runSync(opts: SyncOptions): Promise<SyncResult> {
   installGitHook(opts.targetDir);
 
   printNextSteps(packs, profile);
+  // Last, and only ever additive: everything above has already landed, and offerGlobalInstall
+  // never throws, so nothing this does can turn a completed sync into a failed command.
+  if (opts.installOffer !== false) await offerGlobalInstall();
   return { packs, profile, comingSoon };
 }
 
-type RootCliOptions = { profile?: string; corpus?: string; yes: boolean };
+type RootCliOptions = { profile?: string; corpus?: string; yes: boolean; installOffer: boolean };
 
 /**
  * Wires the framework selector onto the program itself, as a variadic positional argument.
@@ -189,6 +209,7 @@ export function register(program: Command): void {
     .option("--profile <profile>", "greenfield or evolving (default: keep the current profile)")
     .option("--corpus <dir>", "path to the eep corpus (defaults to this CLI's own corpus)")
     .option("--yes", "skip the interactive confirmation prompt", false)
+    .option("--no-install-offer", "skip the global install offer and its hint (CI and scripts)")
     .action(async (frameworks: string[], options: RootCliOptions) => {
       try {
         const corpusDir = options.corpus ?? corpusRoot();
@@ -202,6 +223,7 @@ export function register(program: Command): void {
           tokens: frameworks,
           profile: options.profile === undefined ? undefined : toWritableProfile(options.profile),
           yes: options.yes,
+          installOffer: options.installOffer,
         });
       } catch (error) {
         console.error(error instanceof Error ? error.message : String(error));

@@ -1,16 +1,71 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { execa } from "execa";
 import fg from "fast-glob";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { runInit } from "../src/commands/init.js";
+import { TIP_LINE } from "../src/lib/install-offer.js";
 import { repoRoot } from "../src/lib/schema.js";
 
 const corpusDir = repoRoot();
 
 function newTargetDir(prefix: string): string {
   return mkdtempSync(join(tmpdir(), prefix));
+}
+
+// This machine's PATH with every directory carrying an eep executable removed, and nothing else
+// touched: runInit shells out to git, which still has to resolve. Pinning it is what makes the
+// guidance assertions deterministic on a developer machine that may already have eep installed.
+function pathWithoutEep(): string {
+  return (process.env.PATH ?? "")
+    .split(delimiter)
+    .filter((entry) => entry !== "" && !existsSync(join(entry, "eep")))
+    .join(delimiter);
+}
+
+// The same PATH with a stand in for npm's global shim prepended. Never executed: the resolver only
+// reads its name, type, and mode.
+function pathWithFakeEep(): string {
+  const dir = newTargetDir("eep-fake-bin-");
+  const file = join(dir, "eep");
+  writeFileSync(file, "#!/bin/sh\nexit 0\n");
+  chmodSync(file, 0o755);
+  return [dir, pathWithoutEep()].join(delimiter);
+}
+
+async function withPath<T>(value: string, fn: () => T | Promise<T>): Promise<T> {
+  const original = process.env.PATH;
+  process.env.PATH = value;
+  try {
+    return await fn();
+  } finally {
+    if (original === undefined) {
+      delete process.env.PATH;
+    } else {
+      process.env.PATH = original;
+    }
+  }
+}
+
+async function captureLog(fn: () => Promise<void>): Promise<string> {
+  const lines: string[] = [];
+  const spy = vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+    lines.push(args.map((arg) => String(arg)).join(" "));
+  });
+  try {
+    await fn();
+  } finally {
+    spy.mockRestore();
+  }
+  return lines.join("\n");
 }
 
 // A corpus with a python-fastapi scaffold directory but no pack.yaml anywhere. findScaffoldDir
@@ -103,5 +158,59 @@ describe("runInit", () => {
     ).rejects.toThrow("cleaned up");
 
     expect(existsSync(projectDir)).toBe(false);
+  });
+});
+
+/**
+ * The closing lines of init are the first commands a new project ever runs, so they have to name
+ * the gate in a form the shell that ran init actually has.
+ */
+describe("runInit guidance and the global install offer", () => {
+  it("names the gate in the npx form and prints one install hint when eep is not on PATH", async () => {
+    const targetDir = newTargetDir("eep-init-guidance-npx-");
+
+    const output = await withPath(pathWithoutEep(), () =>
+      captureLog(async () => {
+        await runInit({ name: "npxguidance", targetDir, corpusDir });
+      }),
+    );
+
+    expect(output).toContain(
+      "eep init: full gate: npx engineering-excellence verify from the project",
+    );
+    expect(output).toContain("cd npxguidance && make setup && make test");
+    expect(output).not.toContain("eep verify");
+    expect(output).toContain(TIP_LINE);
+  });
+
+  it("names the gate in the bare form and prints no hint when eep is on PATH", async () => {
+    const targetDir = newTargetDir("eep-init-guidance-bare-");
+
+    const output = await withPath(pathWithFakeEep(), () =>
+      captureLog(async () => {
+        await runInit({ name: "eepguidance", targetDir, corpusDir });
+      }),
+    );
+
+    expect(output).toContain("eep init: full gate: eep verify from the project");
+    expect(output).not.toContain("npx engineering-excellence");
+    expect(output).not.toContain(TIP_LINE);
+    expect(output).not.toContain("tip:");
+  });
+
+  it("suppresses the hint entirely when the install offer is turned off", async () => {
+    const targetDir = newTargetDir("eep-init-guidance-nooffer-");
+
+    const output = await withPath(pathWithoutEep(), () =>
+      captureLog(async () => {
+        await runInit({ name: "nooffer", targetDir, corpusDir, installOffer: false });
+      }),
+    );
+
+    expect(output).toContain(
+      "eep init: full gate: npx engineering-excellence verify from the project",
+    );
+    expect(output).not.toContain(TIP_LINE);
+    expect(output).not.toContain("tip:");
   });
 });
