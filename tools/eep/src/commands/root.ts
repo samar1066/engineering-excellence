@@ -19,7 +19,7 @@ import {
   buildEepYamlContent,
   confirmOrAbort,
   installGitHook,
-  PLANNED_FILES,
+  plannedFiles,
   toWritableProfile,
   type WritableProfile,
 } from "./adopt.js";
@@ -150,11 +150,13 @@ function printRemovals(corpusDir: string, previous: string[], next: string[]): v
   }
 }
 
-function printPlan(packs: string[], profile: WritableProfile): void {
+function printPlan(opts: SyncOptions, packs: string[], profile: WritableProfile): void {
   console.log(`eep: syncing this directory to: ${packs.join(", ")}`);
   console.log(`eep: profile: ${profile}`);
   console.log("eep: will write:");
-  for (const file of PLANNED_FILES) console.log(`  - ${file}`);
+  for (const file of plannedFiles(opts.targetDir, opts.corpusDir, packs)) {
+    console.log(`  - ${file}`);
+  }
 }
 
 // The three commands that matter the moment a sync lands: set the project up, run the gate, and
@@ -249,7 +251,7 @@ export async function runSync(opts: SyncOptions): Promise<SyncResult> {
   const previousPacks = lockedPackNames(currentLock);
 
   const profile = resolveProfile(opts, currentLock);
-  printPlan(packs, profile);
+  printPlan(opts, packs, profile);
   await confirmOrAbort(opts.yes, "sync");
 
   vendorInto(opts.targetDir, opts.corpusDir, packs, profile);

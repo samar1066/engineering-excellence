@@ -6,9 +6,9 @@ import fg from "fast-glob";
 import { stringify as stringifyYaml } from "yaml";
 import { corpusRoot } from "../lib/corpus-root.js";
 import { detectPacks } from "../lib/detect.js";
-import { generateAgentFiles } from "../lib/generate.js";
+import { componentInstructionFiles, generateAgentFiles } from "../lib/generate.js";
 import { loadPack } from "../lib/pack.js";
-import { vendorInto } from "../lib/vendor.js";
+import { planPackLayout, vendorInto } from "../lib/vendor.js";
 
 // Deliberately narrower than resolve.ts's Profile: "steady" is reserved and resolveLaws rejects
 // it downstream anyway, so nothing that writes a lock file accepts it as a target profile in the
@@ -22,17 +22,26 @@ export type AdoptOptions = {
   yes: boolean;
 };
 
-// Fixed, literal list of what a successful run writes. Printed up front during planning
-// regardless of whether .git turns out to exist; the git hook step below prints its own warning
-// when it cannot honor the last entry, rather than this list silently omitting it. Shared with the
-// root framework sync, which writes exactly the same set.
-export const PLANNED_FILES = [
-  ".eep/",
-  "AGENTS.md",
-  "CLAUDE.md",
-  "eep.yaml",
-  ".git/hooks/pre-commit",
-];
+// What a successful run writes at the repository root, always, whatever the pack set is. Printed
+// up front during planning regardless of whether .git turns out to exist; the git hook step below
+// prints its own warning when it cannot honor the last entry, rather than this list silently
+// omitting it. Shared with the root framework sync, which writes exactly the same set.
+const ROOT_PLANNED_FILES = [".eep/", "AGENTS.md", "CLAUDE.md"];
+const TRAILING_PLANNED_FILES = ["eep.yaml", ".git/hooks/pre-commit"];
+
+/**
+ * Every file this run will write, component instruction files included.
+ *
+ * A composed repository's instructions are no longer one document: each pack pinned to a component
+ * directory gets its own CLAUDE.md and AGENTS.md there (see lib/generate.ts). Those are files the
+ * user's repository ends up carrying, so a plan that listed only the root pair would be asking for
+ * consent to a smaller write than the one about to happen. Resolved from the corpus and the target
+ * with the same rule the sync itself pins by, so the list is exact rather than indicative.
+ */
+export function plannedFiles(targetDir: string, corpusDir: string, packs: string[]): string[] {
+  const component = componentInstructionFiles(planPackLayout(targetDir, corpusDir, packs));
+  return [...ROOT_PLANNED_FILES, ...component, ...TRAILING_PLANNED_FILES];
+}
 
 // The gate must run for a consumer who only ever reaches this CLI through npx, so a bare `eep` is
 // never assumed to be on PATH: it is used when present (fast, no network) and the published
@@ -58,11 +67,13 @@ function listAllPackNames(corpusDir: string): string[] {
   return names.sort();
 }
 
-function printPlan(packs: string[], profile: WritableProfile): void {
+function printPlan(opts: AdoptOptions, packs: string[]): void {
   console.log(`eep adopt: detected packs: ${packs.join(", ")}`);
-  console.log(`eep adopt: profile: ${profile}`);
+  console.log(`eep adopt: profile: ${opts.profile}`);
   console.log("eep adopt: will write:");
-  for (const file of PLANNED_FILES) console.log(`  - ${file}`);
+  for (const file of plannedFiles(opts.targetDir, opts.corpusDir, packs)) {
+    console.log(`  - ${file}`);
+  }
 }
 
 async function promptProceed(): Promise<string> {
@@ -143,7 +154,7 @@ export async function runAdopt(opts: AdoptOptions): Promise<{ packs: string[] }>
     throw new Error(`eep: no pack detected; supported packs: ${supported}`);
   }
 
-  printPlan(packs, opts.profile);
+  printPlan(opts, packs);
   await confirmOrAbort(opts.yes, "adopt");
 
   vendorInto(opts.targetDir, opts.corpusDir, packs, opts.profile);

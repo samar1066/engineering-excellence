@@ -6,7 +6,11 @@ import fg from "fast-glob";
 import { corpusRoot } from "../lib/corpus-root.js";
 import { invocation } from "../lib/eep-on-path.js";
 import { resolveFrameworks, validTokens } from "../lib/frameworks.js";
-import { generateAgentFiles } from "../lib/generate.js";
+import {
+  componentInstructionFiles,
+  generateAgentFiles,
+  lockedPackLayout,
+} from "../lib/generate.js";
 import { offerGlobalInstall } from "../lib/install-offer.js";
 import { findPackDir, loadPack } from "../lib/pack.js";
 import { vendorInto } from "../lib/vendor.js";
@@ -75,9 +79,11 @@ const SCAFFOLD_COMMIT_MESSAGE = "feat: scaffold from eep python-fastapi pack";
  */
 const ADOPT_COMMIT_MESSAGE = "chore: adopt engineering excellence gates";
 
-// Exactly what the vendor and generate steps write, by path. Never `git add -A`: a second sweeping
-// commit would also pick up anything the scaffold's own .gitignore does not cover, and a command
-// that commits files the user did not ask it to commit is worse than one that leaves them.
+// Exactly what the vendor and generate steps write at the root, by path. Never `git add -A`: a
+// second sweeping commit would also pick up anything the scaffold's own .gitignore does not cover,
+// and a command that commits files the user did not ask it to commit is worse than one that leaves
+// them. The per component instruction files a composed project also gets are added to this list at
+// commit time, from the lock (see gitCommitGeneratedArtifacts).
 // .git/hooks/pre-commit is deliberately absent: git does not track its own hooks directory, so the
 // installed hook is a fact about the checkout rather than a file that can be committed.
 const GENERATED_ARTIFACTS = [".eep", "AGENTS.md", "CLAUDE.md", "eep.yaml"];
@@ -225,13 +231,22 @@ async function gitInitAndCommit(projectDir: string, message: string): Promise<vo
  * to check a tree it just wrote itself. The gate is for the commits that follow this one, every one
  * of which a developer makes with the hook in place.
  *
+ * A composed project's component instruction files are committed here too, read back off the lock
+ * the run just wrote rather than derived from the plan: the lock is what decided where they went,
+ * and a component file left untracked is the same defect as an untracked root CLAUDE.md, one
+ * directory down.
+ *
  * Paths that do not exist are filtered out rather than passed to git, which refuses an unmatched
- * pathspec outright. All four are written by every successful run today; the filter is what keeps a
- * future change to that set from turning into a failed init.
+ * pathspec outright. All four root paths are written by every successful run today; the filter is
+ * what keeps a future change to that set from turning into a failed init.
  */
 async function gitCommitGeneratedArtifacts(projectDir: string): Promise<void> {
   const env = GIT_IDENTITY_ENV;
-  const paths = GENERATED_ARTIFACTS.filter((relPath) => existsSync(join(projectDir, relPath)));
+  const generated = [
+    ...GENERATED_ARTIFACTS,
+    ...componentInstructionFiles(lockedPackLayout(projectDir)),
+  ];
+  const paths = generated.filter((relPath) => existsSync(join(projectDir, relPath)));
   if (paths.length === 0) return;
   await execa("git", ["add", "--", ...paths], { cwd: projectDir, env });
 
@@ -557,7 +572,8 @@ function buildRootReadme(name: string, componentDirs: string[], placements: Plac
     "- `make verify`: run the full eep gate over every component, from the root.",
     "",
     "The laws in force, the pack enforcing each one, and the command that proves it are listed in",
-    "CLAUDE.md, which eep generates. Do not edit it by hand.",
+    "CLAUDE.md, which eep generates. Each component directory carries its own generated CLAUDE.md",
+    "with that component's golden path. Do not edit either by hand.",
     "",
   ].join("\n");
 }

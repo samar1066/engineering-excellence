@@ -1,4 +1,12 @@
-import { chmodSync, existsSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { execa } from "execa";
@@ -246,6 +254,41 @@ describe("runSync", () => {
     expect(output.indexOf("eep: removed pack aws-cdk")).toBeLessThan(
       output.indexOf("eep: active set:"),
     );
+  });
+
+  /**
+   * The instructions have to narrow with the gate.
+   *
+   * A dropped pack's component CLAUDE.md is a golden path this repository no longer enforces, and
+   * an agent working in that directory would keep reading it with nothing at the root to contradict
+   * it. The component directory itself is the user's code and stays, exactly as the removal notice
+   * above says it does.
+   */
+  it("removes a dropped pack's component instruction files, keeping the directory", async () => {
+    const targetDir = newTargetDir("eep-sync-narrowing-instructions-");
+    for (const dir of ["backend", "frontend"]) mkdirSync(join(targetDir, dir), { recursive: true });
+
+    await runSync({
+      targetDir,
+      corpusDir,
+      tokens: ["fastapi", "react"],
+      yes: true,
+      installOffer: false,
+    });
+    expect(existsSync(join(targetDir, "frontend", "CLAUDE.md"))).toBe(true);
+    expect(existsSync(join(targetDir, "backend", "AGENTS.md"))).toBe(true);
+
+    await runSync({ targetDir, corpusDir, tokens: ["fastapi"], yes: true, installOffer: false });
+
+    expect(existsSync(join(targetDir, "frontend", "CLAUDE.md"))).toBe(false);
+    expect(existsSync(join(targetDir, "frontend", "AGENTS.md"))).toBe(false);
+    expect(existsSync(join(targetDir, "frontend"))).toBe(true);
+    // One pack left, and it still has a component directory of its own, so the composed layout
+    // holds: the backend keeps its golden path and the root keeps routing to it.
+    expect(existsSync(join(targetDir, "backend", "CLAUDE.md"))).toBe(true);
+    const root = readFileSync(join(targetDir, "CLAUDE.md"), "utf8");
+    expect(root).toContain("| backend | python-fastapi | backend/CLAUDE.md |");
+    expect(root).not.toContain("| frontend |");
   });
 
   it("says nothing about removals when the pack set is unchanged or grows", async () => {

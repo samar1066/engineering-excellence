@@ -27,6 +27,16 @@ const WAIVERS_FILE_NAME = "waivers.yaml";
 // and verify treats its absence as authoritative rather than looking for the directory again.
 type LockPack = { name: string; version: string; workdir?: string };
 
+/**
+ * One pack and the component directory it governs in this target, or null for a pack whose
+ * contribution is repository level.
+ *
+ * The same fact the lock records, in the shape the readers of it want: the agent file generator
+ * decides its whole layout from this (see lib/generate.ts), and the commands that print a plan
+ * before writing anything need it one step earlier, before a lock exists to read.
+ */
+export type PackLayout = { name: string; workdir: string | null };
+
 type Lock = {
   program_version: string;
   profile: string;
@@ -83,6 +93,26 @@ function resolvePacks(root: string, packNames: string[]): ResolvedPack[] {
 function pinWorkdir(targetDir: string, declared: string | null): string | undefined {
   if (declared === null) return undefined;
   return existsSync(join(targetDir, declared)) ? declared : undefined;
+}
+
+/**
+ * The layout a sync of `packNames` into `targetDir` would pin, computed from the corpus and the
+ * target alone.
+ *
+ * Same rule and same inputs as the sync itself (see pinWorkdir), so a plan printed before the
+ * write names exactly the files the write produces. Throws for a pack the corpus does not carry,
+ * which is what every caller wants: they are about to vendor that same set.
+ */
+export function planPackLayout(
+  targetDir: string,
+  corpusDir: string,
+  packNames: string[],
+): PackLayout[] {
+  const target = resolve(targetDir);
+  return resolvePacks(resolve(corpusDir), packNames).map((pack) => ({
+    name: pack.name,
+    workdir: pinWorkdir(target, pack.declaredWorkdir) ?? null,
+  }));
 }
 
 function copyFilesWithExtension(srcDir: string, destDir: string, extension: string): void {
