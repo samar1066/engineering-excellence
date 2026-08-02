@@ -26,6 +26,8 @@ declines:
   - law: EEP-DOCS-03
     reason: "Corpus scoped law; consumer repositories are not required to index every directory."
 toolchain:
+  runtime: { tool: "python 3.11", rationale: "The floor pyproject.toml declares, so an older interpreter fails at install rather than at import." }
+  framework: { tool: fastapi, rationale: "The framework this pack detects on, wired once in create_app." }
   package_manager: { tool: uv, rationale: "Fast resolver with a lockfile by default." }
   formatter: { tool: "ruff format", config: templates/config/ruff.toml, rationale: "One tool with the linter, zero config drift." }
   linter: { tool: ruff, config: templates/config/ruff.toml, rationale: "Replaces Black, isort, Flake8, and bandit rules in one pass." }

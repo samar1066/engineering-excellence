@@ -594,8 +594,9 @@ function cleanupProjectDir(projectDir: string, existedBefore: boolean): void {
  *
  * With tokens: the same outcome for a project made of several components. Each stack pack's
  * scaffold is rendered into its own component directory, platform and delivery scaffolds into
- * theirs or the repository root, and the root gains a README, a Makefile that fans setup, test,
- * and verify into the components, and the union of their ignore entries. The whole tree is one git
+ * theirs or the repository root, and the root gains a README, a Makefile that fans setup and test
+ * into the components while running the whole eep gate at the root for verify (see
+ * buildRootMakefile), and the union of their ignore entries. The whole tree is one git
  * repository with one initial commit, and one vendor pass at the root puts every selected pack's
  * laws into a single .eep, a single eep.yaml, and one set of agent instructions.
  *

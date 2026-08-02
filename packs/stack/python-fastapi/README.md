@@ -46,6 +46,8 @@ It declines one law: EEP-DOCS-03, with the recorded reason "Corpus scoped law; c
 
 | Tool | Config | Rationale |
 |------|--------|-----------|
+| python 3.11 | | The floor pyproject.toml declares, so an older interpreter fails at install rather than at import. |
+| fastapi | | The framework this pack detects on, wired once in create_app. |
 | uv | | Fast resolver with a lockfile by default. |
 | ruff format | templates/config/ruff.toml | One tool with the linter, zero config drift. |
 | ruff | templates/config/ruff.toml | Replaces Black, isort, Flake8, and bandit rules in one pass. |
@@ -63,7 +65,7 @@ It declines one law: EEP-DOCS-03, with the recorded reason "Corpus scoped law; c
 
 ## Standalone use
 
-Copy this folder plus CONSTITUTION.md into any repository and point your agent at STACK.md; the eep CLI is an accelerator, not a requirement. The scaffold's `make verify` reaches the full gate either way: it runs an installed `eep` when there is one and otherwise falls back to `npx engineering-excellence verify`, so Node 22 is its only extra prerequisite. Without Node at all, the gate is `make test` plus the five shell checks in `checks/manifest.yaml`, which are plain commands you can run by hand; the seven builtin checks are implemented inside the CLI and run only through `eep verify`. The scaffold's `pyproject.toml` ships with a `{{project_name}}` placeholder, so `make setup` and `make test` work once `eep init` has rendered it or you have substituted the token by hand; beyond that, uv and Python 3.11 are the only prerequisites.
+Copy this folder plus CONSTITUTION.md into any repository and point your agent at STACK.md; the eep CLI is an accelerator, not a requirement. The scaffold's `make verify` reaches the full gate either way: it runs an installed `eep` when there is one and otherwise falls back to `npx engineering-excellence verify`, so Node 22 is its only extra prerequisite. Without Node at all, the gate is `make test` plus the five shell checks in `checks/manifest.yaml`, which are plain commands you can run by hand; the seven builtin checks are implemented inside the CLI and run only through `eep verify`. The scaffold's `pyproject.toml` and `uv.lock` ship with a `{{project_name}}` placeholder, so `make setup` and `make test` work once `eep init` has rendered it or you have substituted the token by hand; beyond that, uv and Python 3.11 are the only prerequisites.
 
 ## Related
 

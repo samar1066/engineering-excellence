@@ -27,6 +27,8 @@ declines:
   - law: EEP-DOCS-03
     reason: "Corpus scoped law; consumer repositories are not required to index every directory."
 toolchain:
+  runtime: { tool: "node 22", rationale: "Declared in engines in package.json, so an older Node fails at install rather than at run time." }
+  framework: { tool: "fastify 5", rationale: "The server this pack detects on, wired once in createApp with the zod type provider." }
   package_manager: { tool: npm, rationale: "Ships with Node 22, writes a lockfile by default, and npm ci is the reproducible install." }
   formatter: { tool: biome, config: templates/config/biome.json, rationale: "One tool with the linter, one config, zero drift." }
   linter: { tool: biome, config: templates/config/biome.json, rationale: "Replaces ESLint and Prettier in a single pass." }

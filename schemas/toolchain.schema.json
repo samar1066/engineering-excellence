@@ -18,6 +18,16 @@
     "logging": { "$ref": "#/$defs/entry" },
     "tracing": { "$ref": "#/$defs/entry" },
     "hooks": { "$ref": "#/$defs/entry" },
+    "language": { "$ref": "#/$defs/entry" },
+    "runtime": { "$ref": "#/$defs/entry" },
+    "framework": { "$ref": "#/$defs/entry" },
+    "build": { "$ref": "#/$defs/entry" },
+    "ui": { "$ref": "#/$defs/entry" },
+    "accessibility": { "$ref": "#/$defs/entry" },
+    "container_build": { "$ref": "#/$defs/entry" },
+    "local_dev": { "$ref": "#/$defs/entry" },
+    "ci": { "$ref": "#/$defs/entry" },
+    "iac": { "$ref": "#/$defs/entry" },
     "declined": { "type": "array", "items": {
       "type": "object", "required": ["category", "reason"],
       "properties": { "category": { "type": "string" }, "reason": { "type": "string", "minLength": 10 } } } }

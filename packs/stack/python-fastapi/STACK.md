@@ -39,6 +39,7 @@ tests/
   conftest.py        app and client fixtures shared by the whole suite
 Makefile             the four entry points: setup, test, verify, run
 pyproject.toml       dependencies plus the import-linter layer contracts
+uv.lock              the resolved dependency graph, committed and gated by EEP-DLV-02
 ```
 
 Dependencies point inward: `app.api` may import `app.domain`, `app.infrastructure` implements `app.domain` interfaces, and `app.domain` imports neither of them.
@@ -82,6 +83,8 @@ The blessed tools. Do not substitute alternatives without a waiver.
 
 | Category | Tool | Command |
 |----------|------|---------|
+| Runtime | python 3.11 | declared as `requires-python` in `pyproject.toml` |
+| Framework | fastapi | wired once in `create_app` |
 | Package manager | uv | `uv sync` |
 | Formatter | ruff format | `uv run ruff format .` |
 | Linter | ruff | `uv run ruff check .` |

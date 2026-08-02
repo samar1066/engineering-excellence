@@ -31,13 +31,30 @@ Run it bare to see what is supported and what was detected in your project:
 npx engineering-excellence
 ```
 
+## Enterprise app in one command
+
+```bash
+npx engineering-excellence init shop fastapi react cdk github-actions docker
+```
+
+One line, one repository, five packs. What appears in `shop/`:
+
+1. **Three components.** `backend/` is a five layer FastAPI service, `frontend/` is a React 18 interface on Vite, and `infra/` is an AWS CDK application that deploys the service to AWS Fargate behind a load balancer, in three stages: dev, uat, and production.
+2. **A container layer.** Image definitions under `docker/` and a compose file at the root that starts the components together for local work.
+3. **A pipeline.** `.github/workflows/ci.yml` gates every change, and `deploy.yml` promotes one built image through the three stages, federating with OpenID Connect so no long lived credential is ever stored.
+4. **The gates.** `.eep/` holds every law in force with the check that proves it, `CLAUDE.md` and `AGENTS.md` carry the instructions your agent reads, a pre-commit hook runs the gate before a commit exists, and the root `Makefile` fans `make setup` and `make test` into the components while `make verify` runs the whole gate at once.
+
+Re run the token command inside the project at any time with a different list, and eep adds or removes frameworks to match.
+
+Naming one framework (`npx engineering-excellence init shop fastapi`) keeps that single application at the repository root. Naming several composes them into one repository, each in its own component directory.
+
 ## What we support
 
 | Framework or platform | Token | Status |
 |---|---|---|
 | FastAPI (Python) | `fastapi` | Available |
-| Node and TypeScript services | `node` | In development |
-| React | `react` | In development |
+| Node and TypeScript services | `node` | Available |
+| React | `react` | Available |
 | Angular | `angular` | In development |
 | React Native | `react-native` | In development |
 | Java Spring | `java` | In development |
@@ -45,12 +62,13 @@ npx engineering-excellence
 | Go | `go` | In development |
 | C++ | `cpp` | In development |
 | SQL and Postgres | `sql` | In development |
-| AWS serverless | `aws` | In development |
-| AWS CDK | `cdk` | In development |
+| AWS serverless | `aws` | Available |
+| AWS CDK Fargate | `cdk` | Available |
 | Terraform | `terraform` | In development |
-| Kubernetes and containers | `k8s` | In development |
+| Containers and Kubernetes | `docker` or `k8s` | Available |
 | Power Platform | `power-platform` | In development |
-| GitHub Actions, Azure DevOps, GitLab CI | `github-actions`, `azure-devops`, `gitlab` | In development |
+| GitHub Actions delivery | `github-actions` | Available |
+| Azure DevOps, GitLab CI | `azure-devops`, `gitlab` | In development |
 
 The list grows without redesign: every framework is a pack held to one
 executable contract, and the CLI discovers packs at runtime, so a new
@@ -104,7 +122,7 @@ given only the generated file ships gate passing features.
 | Command | Purpose |
 |---|---|
 | `npx engineering-excellence [tokens...]` | Sync this repo to exactly those frameworks; bare shows capabilities |
-| `npx engineering-excellence init <name>` | New compliant project in one command |
+| `npx engineering-excellence init <name> [tokens...]` | New compliant project in one command; several tokens compose one repository of components |
 | `npx engineering-excellence verify [--changed]` | Run every active law check; exit 1 on blocking failures |
 | `npx engineering-excellence explain <LAW-ID>` | Print a law and the active binding for it |
 | `npx engineering-excellence adopt` | Detection based onboarding (the token form supersedes it for most uses) |

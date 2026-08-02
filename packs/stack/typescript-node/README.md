@@ -63,7 +63,7 @@ It declines two laws:
 | OpenTelemetry node SDK | templates/config/otel.ts | Vendor neutral traces from startup, fastify entry points instrumented. |
 | none (hooks) | | eep adopt installs the pre-commit gate, so the pack adds no second hook manager. |
 
-The runtime and framework rows are documented here rather than in `pack.yaml`, whose toolchain schema does not yet carry those two categories; both are enforced by the scaffold itself, through `engines` and through the `fastify` dependency the pack detects on.
+The runtime and framework rows are `runtime` and `framework` entries in `pack.yaml`, not prose alone; both are also enforced by the scaffold itself, through `engines` and through the `fastify` dependency the pack detects on.
 
 ## Standalone use
 
