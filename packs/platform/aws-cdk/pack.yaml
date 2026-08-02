@@ -38,10 +38,9 @@ declines:
     reason: "Corpus scoped law; consumer repositories are not required to index every directory."
   - law: EEP-DEVX-01
     reason: "Stack scoped law about the repository's one command entry point. This scaffold still ships a Makefile whose setup target the composed root Makefile fans out to."
-# TypeScript strict is the language and aws-cdk-lib v2 with constructs is the infrastructure
-# library. The toolchain schema has no language or iac category, so both are documented as rows in
-# README.md and STACK.md rather than invented as keys here.
 toolchain:
+  language: { tool: "TypeScript strict", rationale: "The bin, lib, and test source are TypeScript with strict mode on in tsconfig.json, the same configuration tsc --noEmit checks against." }
+  iac: { tool: "aws-cdk-lib v2", rationale: "One library synthesizes the stack for every stage, and cdk diff is the preview it ships with before a deploy." }
   package_manager: { tool: npm, rationale: "Ships with Node, and npm ci restores the committed lockfile exactly." }
   formatter: { tool: "biome format", config: templates/config/biome.json, rationale: "One binary formats and lints, so the two can never disagree." }
   linter: { tool: biome, config: templates/config/biome.json, rationale: "Replaces ESLint and Prettier in a single pass, with no plugin graph to maintain." }

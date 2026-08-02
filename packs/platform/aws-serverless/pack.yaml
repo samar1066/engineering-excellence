@@ -38,10 +38,9 @@ declines:
     reason: "Corpus scoped law; consumer repositories are not required to index every directory."
   - law: EEP-DEVX-01
     reason: "This component ships a Makefile with a setup target, and the repository level one command gate belongs to the application component's pack."
-# CDK v2 on TypeScript is the infrastructure language and aws-cdk-lib is the construct library. The
-# toolchain schema has no runtime or framework category, so both are documented in STACK.md and
-# README.md rather than invented as keys here.
 toolchain:
+  language: { tool: "TypeScript strict", rationale: "The bin, lib, and test source are TypeScript with strict mode on in tsconfig.json, the same configuration tsc --noEmit checks against." }
+  iac: { tool: "aws-cdk-lib v2", rationale: "One library synthesizes the template for every stage, and cdk synth is the preview it ships with before a deploy." }
   package_manager: { tool: npm, rationale: "Ships with Node, and npm ci restores the committed lockfile exactly." }
   formatter: { tool: "biome format", config: templates/config/biome.json, rationale: "One binary formats and lints, so the two can never disagree." }
   linter: { tool: biome, config: templates/config/biome.json, rationale: "Replaces ESLint and Prettier in a single pass, with no plugin graph to maintain." }

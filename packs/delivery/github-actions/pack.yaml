@@ -34,13 +34,8 @@ declines:
     reason: "Corpus scoped law; consumer repositories are not required to index every directory."
   - law: EEP-DEVX-01
     reason: "Stack scoped law. The one command setup entry point belongs to the components and to the composed root Makefile, neither of which this pack writes."
-# The blessed delivery toolchain is GitHub Actions itself: hosted ubuntu-latest runners, GitHub
-# environments for the approvals at uat and production, and OpenID Connect federation to AWS so a
-# deployment role is assumed per run and no long lived access key is ever stored. Amazon ECR holds
-# the promoted image and the AWS CDK CLI applies it, both driven from the workflows in scaffold/.
-# The toolchain schema has no ci or delivery category, so that is recorded here, in README.md, and
-# in STACK.md rather than invented as a key below.
 toolchain:
+  ci: { tool: "github actions with OIDC to AWS", rationale: "Hosted runners federate to AWS with OpenID Connect per run, so a deployment role is assumed for the job and no long lived access key is ever stored in the repository." }
   declined:
     - category: package_manager
       reason: "A workflow declares actions by version, not packages; the components it runs bring their own package managers."

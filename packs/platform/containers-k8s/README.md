@@ -54,7 +54,7 @@ It declines thirteen laws. Every one of them is real work that a composed reposi
 | docker with BuildKit | | BuildKit is the default builder from Docker 23 and the reason a multi stage file is cheap: unused stages are skipped, independent stages run in parallel, and the content addressed cache keeps a dependency layer alive across an application change. It also carries `docker build --check`. |
 | docker compose | `scaffold/docker-compose.dev.yaml` | One file starts the composed system from the same definitions a release builds from, so a local run and a deployed run differ in configuration only. |
 
-Both rows are documented here and in `STACK.md` rather than declared in `pack.yaml`, because the toolchain schema defines no container build or local development category and forbids additional properties. Every category it does define is declined in `pack.yaml` with a reason, since this pack authors no application source for one to act on.
+Both rows are declared in `pack.yaml` as first class toolchain entries, and repeated here and in `STACK.md` for a reader who never opens the manifest. Every other category the schema defines is declined in `pack.yaml` with a reason, since this pack authors no application source for one to act on.
 
 ## Standalone use
 

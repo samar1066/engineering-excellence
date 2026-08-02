@@ -35,12 +35,9 @@ declines:
     reason: "Stack scoped law, gated by the stack packs present. The one command entry point is the composed root Makefile plus each component Makefile; this pack writes neither and adds no third entry point."
   - law: EEP-DOCS-03
     reason: "Corpus scoped law; consumer repositories are not required to index every directory."
-# The two tools this pack blesses are docker with BuildKit for image builds and docker compose for
-# the local loop. The toolchain schema defines no container_build or local_dev category and forbids
-# additional properties, so both are documented in full in STACK.md and README.md rather than
-# invented as keys here, the same way the react pack documents Vite. Every category the schema does
-# define is declined below, because this pack authors no application source for one to act on.
 toolchain:
+  container_build: { tool: "docker with BuildKit", rationale: "BuildKit is Docker's default builder since Docker 23, skips unused stages, builds independent stages in parallel, and ships docker build --check as its lint pass." }
+  local_dev: { tool: "docker compose", rationale: "scaffold/docker-compose.dev.yaml starts the composed system from the same image definitions a release builds, so the local loop and a deployed run differ in configuration only." }
   declined:
     - category: package_manager
       reason: "Dependencies are installed by each component's own package manager, uv or npm, from the lockfile the image copies in; docker resolves nothing itself."

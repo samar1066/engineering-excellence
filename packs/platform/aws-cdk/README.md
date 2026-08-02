@@ -44,7 +44,7 @@ It declines thirteen laws, each with a recorded reason in `pack.yaml`. They are 
 | tsc --noEmit | templates/config/tsconfig.json | A misconfigured construct is a type error before it is a failed deployment. |
 | vitest with aws-cdk-lib assertions | | Synthesizes each stage in process and asserts on the rendered template, so a stage's shape is proven with no AWS account involved. |
 
-The first two rows have no category in the toolchain schema, which covers language agnostic tooling roles, so they are recorded here and in `STACK.md` rather than invented as keys in `pack.yaml`. Nine categories are declined outright with reasons in `pack.yaml`: boundaries, integration_test, api_test, e2e_test, coverage, mocking, logging, tracing, and hooks.
+The first two rows are declared in `pack.yaml` as the language and iac toolchain entries. Nine categories are declined outright with reasons in `pack.yaml`: boundaries, integration_test, api_test, e2e_test, coverage, mocking, logging, tracing, and hooks.
 
 ## Standalone use
 

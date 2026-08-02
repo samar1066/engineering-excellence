@@ -39,7 +39,7 @@ It declines the thirteen stack scoped laws, each with a recorded reason in `pack
 | Tool | Config | Rationale |
 |------|--------|-----------|
 | npm | | Ships with Node, and npm ci restores the committed lockfile exactly. |
-| CDK v2 with aws-cdk-lib on TypeScript | | The infrastructure language and construct library; not a toolchain schema category, so it is recorded here. |
+| CDK v2 with aws-cdk-lib on TypeScript | | The infrastructure language and construct library, now declared in `pack.yaml` as the language and iac entries. |
 | biome format | templates/config/biome.json | One binary formats and lints, so the two can never disagree. |
 | biome | templates/config/biome.json | Replaces ESLint and Prettier in a single pass, with no plugin graph to maintain. |
 | tsc --noEmit | templates/config/tsconfig.json | Strict from the first file catches a wrong construct property before synthesis does. |

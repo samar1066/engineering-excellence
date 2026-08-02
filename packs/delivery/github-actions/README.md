@@ -34,7 +34,7 @@ It declines twelve laws, each with a recorded reason: EEP-ARCH-01, EEP-TEST-01, 
 
 ## Blessed toolchain
 
-The toolchain schema has a closed category set with no entry for continuous integration or delivery, so the tools below are recorded in `pack.yaml` as a comment, here, and in `STACK.md` rather than invented as manifest keys. What `pack.yaml` does carry is the list of categories this pack declines and why.
+GitHub Actions with OIDC to AWS is now declared in `pack.yaml` as the ci entry. GitHub environments, Amazon ECR, and the AWS CDK CLI remain documented only here and in `STACK.md`. What `pack.yaml` does carry is the list of categories this pack declines and why.
 
 | Tool | Config | Rationale |
 |------|--------|-----------|
