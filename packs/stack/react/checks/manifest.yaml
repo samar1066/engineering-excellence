@@ -1,0 +1,42 @@
+checks:
+  - law: EEP-ARCH-01
+    kind: shell
+    command: "npx depcruise --config .dependency-cruiser.cjs src"
+    proves: "The layer rules in .dependency-cruiser.cjs hold across the whole module graph."
+  - law: EEP-TEST-01
+    kind: shell
+    command: "npx vitest list --filesOnly 2>&1 | grep ."
+    proves: "The suite exists and at least one test file collects."
+    fail_if_stdout_matches: "No test files found"
+  - law: EEP-TEST-03
+    kind: shell
+    command: "npm run test:cov"
+    proves: "Behavior coverage meets the declared minimum on every metric."
+  - law: EEP-FE-01
+    kind: shell
+    command: "npm run test:a11y"
+    proves: "Automated accessibility rules find no violation on any primary state of the interface."
+  - law: EEP-SEC-01
+    kind: builtin
+    command: "secrets-scan"
+    proves: "No credential material in tracked files."
+  - law: EEP-DLV-01
+    kind: builtin
+    command: "file-contains-any .github/workflows 'eep verify'"
+    proves: "CI runs the gate."
+  - law: EEP-DLV-02
+    kind: shell
+    command: "npm ci --dry-run"
+    proves: "package-lock.json exists and resolves package.json with no drift."
+  - law: EEP-DOCS-01
+    kind: builtin
+    command: "docs-frontmatter docs"
+    proves: "Governed docs carry valid frontmatter (skipped when no docs directory exists)."
+  - law: EEP-DOCS-02
+    kind: builtin
+    command: "docs-style ."
+    proves: "No banned dash characters, no zero based ordered lists in markdown."
+  - law: EEP-DEVX-01
+    kind: builtin
+    command: "file-contains Makefile setup"
+    proves: "One command setup entry point exists."

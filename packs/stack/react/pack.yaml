@@ -1,0 +1,55 @@
+name: react
+kind: stack
+version: 1.0.0
+tier: 1
+source: builtin
+detect:
+  - file: package.json
+    contains: "react"
+requires: []
+component_dir: frontend
+workdir: frontend
+implements:
+  - EEP-ARCH-01
+  - EEP-TEST-01
+  - EEP-TEST-03
+  - EEP-FE-01
+  - EEP-SEC-01
+  - EEP-DLV-01
+  - EEP-DLV-02
+  - EEP-DOCS-01
+  - EEP-DOCS-02
+  - EEP-DEVX-01
+declines:
+  - law: EEP-SEC-02
+    reason: "Backend scoped law. This component opens no data store connection: every query it depends on lives in an API component, whose own pack implements this law."
+  - law: EEP-OBS-01
+    reason: "Backend scoped law. Server side logs and their correlation ids belong to the API components; this component consumes their responses and surfaces failures on screen."
+  - law: EEP-OBS-02
+    reason: "Backend scoped law. Trace propagation is owned by the API components a browser calls; browser side telemetry is a product decision rather than a build gate here."
+  - law: EEP-DOCS-03
+    reason: "Corpus scoped law; consumer repositories are not required to index every directory."
+# Vite is the build tool and dev server and React 18 on TypeScript strict is the UI runtime. The
+# toolchain schema has no build or ui category, so both are documented in STACK.md and README.md
+# rather than invented as keys here.
+toolchain:
+  package_manager: { tool: npm, rationale: "Ships with Node, and npm ci restores the committed lockfile exactly." }
+  formatter: { tool: "biome format", config: templates/config/biome.json, rationale: "One binary formats and lints, so the two can never disagree." }
+  linter: { tool: biome, config: templates/config/biome.json, rationale: "Replaces ESLint and Prettier in a single pass, with no plugin graph to maintain." }
+  type_checker: { tool: "tsc --noEmit", config: templates/config/tsconfig.json, rationale: "Strict from the first file is cheaper than strict later." }
+  boundaries: { tool: dependency-cruiser, config: templates/config/dependency-cruiser.cjs, rationale: "Turns the components to hooks to api direction into a build failure." }
+  unit_test: { tool: "vitest with testing-library and jsdom", config: templates/config/vitest.config.ts, rationale: "One runner on the Vite pipeline, so a test compiles the way the app does." }
+  integration_test: { tool: "vitest-axe over the composed interface", config: templates/config/vitest.config.ts, rationale: "Renders the whole screen per primary state and fails on an accessibility violation." }
+  api_test: { tool: "vitest with a stubbed fetch", rationale: "The typed client is proven at its contract instead of against a live server." }
+  e2e_test: { tool: playwright, rationale: "The composed application's browser tool, documented here and installed there, not a dependency of this scaffold." }
+  coverage: { tool: "vitest with the v8 provider", config: templates/config/vitest.config.ts, rationale: "Feeds the EEP-TEST-03 gate at 85 percent of src, on every metric." }
+  mocking: { tool: "vitest vi.fn and vi.stubGlobal", rationale: "Built into the runner, so no separate mocking library enters the tree." }
+  declined:
+    - category: logging
+      reason: "Structured server logs belong to the API components this interface calls; a browser console line is a debugging aid, not a log pipeline."
+    - category: tracing
+      reason: "Trace context starts in the API components; adding browser instrumentation is a product decision rather than a default of this pack."
+    - category: hooks
+      reason: "The scaffold ships no hook manager of its own: eep adopt installs the pre commit gate, and make test is the loop before that."
+authors: [{ name: Samar Swami, github: "@samar1066" }]
+maintainers: ["@samar1066"]
