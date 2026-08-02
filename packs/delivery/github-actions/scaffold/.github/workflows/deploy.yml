@@ -71,6 +71,17 @@ jobs:
         id: ecr
         uses: aws-actions/amazon-ecr-login@v2
       - name: build and push the image
+        # The canonical build shape, shared with the containers pack: the dockerfile is named with
+        # -f and the context is the repository root, the trailing dot, never docker/ and never a
+        # component directory. That is a requirement, not a preference. The single root
+        # .dockerignore applies only to a root context, and a definition that copies a file from
+        # outside its own directory, docker/nginx.conf among them, cannot see it from anywhere
+        # else. Narrowing the context to make the build look tidier breaks both.
+        #
+        # The tag carries the ECR registry host in front of the repository name because docker
+        # push needs a fully qualified reference. IMAGE_TAG itself is the commit sha, resolved
+        # once in the step above so that every stage below promotes one reference.
+        #
         # Skipped when the dispatch named a tag: that image already exists, and rebuilding over it
         # would replace the bytes uat approved with different ones under the same name.
         if: inputs.imageTag == ''

@@ -158,10 +158,23 @@ Stack names follow `<project>-dev`, `<project>-uat`, and `<project>-prod`,
 rendered from the project name at `eep init`. If a stack is renamed, the three
 deploy steps are what changes.
 
-With the containers pack: the path `docker/backend.Dockerfile`. The build job
-builds that file with the repository root as its context. A repository that
-ships more than one image adds a build step per image and a tag per image,
-keeping one build job so the artifacts stay siblings of one run.
+With the containers pack: the path `docker/backend.Dockerfile`, and the shape
+of the build itself. The canonical form is
+`docker build -f docker/backend.Dockerfile -t <repository>:<sha> .`, and each
+of its three parts is load bearing. The dockerfile is named with `-f`. The
+context is the repository root, the trailing dot, never `docker/` and never a
+component directory: the single root `.dockerignore` applies only to a root
+context, and a definition that copies a file from outside its own directory,
+`docker/nginx.conf` among them, cannot reach it from anywhere else. The tag is
+the commit sha. Narrowing the context to make the command look tidier is the
+edit to refuse.
+
+The one thing this pack adds to that form is the registry host in front of the
+repository name, because `docker push` needs a fully qualified ECR reference;
+the tag after the colon is the same commit sha, resolved once in the build job
+so that every stage promotes one reference. A repository that ships more than
+one image adds a build step per image and a tag per image, keeping one build
+job so the artifacts stay siblings of one run.
 
 With the stack packs: the marker files in the table above, and each
 component's own gate command. A stack pack's own `ci.yml`, scaffolded inside
