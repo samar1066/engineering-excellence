@@ -1,0 +1,14 @@
+{
+  "app": "npx tsx bin/app.ts",
+  "output": "cdk.out",
+  "watch": {
+    "include": ["bin/**", "lib/**"],
+    "exclude": ["cdk.out/**", "node_modules/**", "test/**"]
+  },
+  "context": {
+    "@aws-cdk/core:validateAgainstDefaultRules": true,
+    "@aws-cdk/core:checkSecretUsage": true,
+    "@aws-cdk/core:target-partitions": ["aws", "aws-cn"],
+    "@aws-cdk/aws-lambda:recognizeLayerVersion": true
+  }
+}

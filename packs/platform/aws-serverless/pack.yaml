@@ -1,0 +1,66 @@
+name: aws-serverless
+kind: platform
+version: 1.0.0
+tier: 1
+source: builtin
+detect:
+  - file: infra-serverless/cdk.json
+requires: []
+component_dir: infra-serverless
+workdir: infra-serverless
+implements:
+  - EEP-IAC-01
+  - EEP-DLV-04
+declines:
+  - law: EEP-ARCH-01
+    reason: "Stack scoped law. One CDK app of three source files has no layer graph to constrain; the application component's pack owns the boundary contract."
+  - law: EEP-TEST-01
+    reason: "Stack scoped law. Template assertions run through this component's test target, and the repository wide proof that a suite exists belongs to the application component's pack."
+  - law: EEP-TEST-03
+    reason: "Stack scoped law. Line coverage over construct code measures the wrong artifact; what ships is the synthesized template, which test/ asserts against directly."
+  - law: EEP-SEC-01
+    reason: "Repository wide law proved once by the application component's pack. This component holds no credential material and writes no account id, by design."
+  - law: EEP-SEC-02
+    reason: "Backend scoped law. This component opens no data store connection and assembles no query."
+  - law: EEP-OBS-01
+    reason: "Backend scoped law. The handler emits structured JSON and STACK.md carries the Powertools upgrade, but the logging pipeline gate belongs to the application component's pack."
+  - law: EEP-OBS-02
+    reason: "Backend scoped law. This component turns tracing on at the function; propagating context across handlers is the application component's proof to make."
+  - law: EEP-DLV-01
+    reason: "Delivery scoped law owned by the repository's workflow pack, which places the CI entry point. This component ships no workflow of its own."
+  - law: EEP-DLV-02
+    reason: "This component commits its own package-lock.json, and the single freshness gate over the repository belongs to the application component's pack."
+  - law: EEP-DOCS-01
+    reason: "Docs scoped law. This component publishes no governed docs directory; repository docs are gated by the application component's pack."
+  - law: EEP-DOCS-02
+    reason: "Docs scoped law proved once over the repository by the application component's pack; a second sweep from this workdir would re-read the same markdown."
+  - law: EEP-DOCS-03
+    reason: "Corpus scoped law; consumer repositories are not required to index every directory."
+  - law: EEP-DEVX-01
+    reason: "This component ships a Makefile with a setup target, and the repository level one command gate belongs to the application component's pack."
+# CDK v2 on TypeScript is the infrastructure language and aws-cdk-lib is the construct library. The
+# toolchain schema has no runtime or framework category, so both are documented in STACK.md and
+# README.md rather than invented as keys here.
+toolchain:
+  package_manager: { tool: npm, rationale: "Ships with Node, and npm ci restores the committed lockfile exactly." }
+  formatter: { tool: "biome format", config: templates/config/biome.json, rationale: "One binary formats and lints, so the two can never disagree." }
+  linter: { tool: biome, config: templates/config/biome.json, rationale: "Replaces ESLint and Prettier in a single pass, with no plugin graph to maintain." }
+  type_checker: { tool: "tsc --noEmit", config: templates/config/tsconfig.json, rationale: "Strict from the first file catches a wrong construct property before synthesis does." }
+  unit_test: { tool: "vitest with the aws-cdk-lib assertions module", rationale: "Asserts over the synthesized template, which is the artifact AWS actually receives." }
+  integration_test: { tool: "cdk synth over every stage", rationale: "Renders dev, uat, and prod from a clean checkout with no credentials and no bundler." }
+  e2e_test: { tool: "cdk deploy into a sandbox account, then a request against the stack's ApiUrl output", rationale: "The only proof that survives a real deployment; run against an account rather than shipped in this scaffold." }
+  logging: { tool: "aws-lambda-powertools logger", rationale: "Structured JSON with invocation context inside handlers; the inline scaffold handler prints the same shape until the first bundled handler pulls the library in." }
+  tracing: { tool: "AWS X-Ray active tracing with the aws-lambda-powertools tracer", rationale: "The function opts into X-Ray in the scaffold, and the tracer adds handler subsegments to that segment." }
+  declined:
+    - category: boundaries
+      reason: "Three source files with one import direction have no layer graph; a boundary tool here would guard nothing."
+    - category: api_test
+      reason: "This component exposes no API of its own: the HTTP surface belongs to the handlers behind the gateway."
+    - category: coverage
+      reason: "A coverage percentage over construct code rewards instantiating cheap constructs; the template assertions are the measure that means something here."
+    - category: mocking
+      reason: "Synthesis is offline and deterministic, so the tests build real constructs instead of standing in for them."
+    - category: hooks
+      reason: "The scaffold ships no hook manager of its own: eep adopt installs the pre commit gate, and make test is the loop before that."
+authors: [{ name: Samar Swami, github: "@samar1066" }]
+maintainers: ["@samar1066"]

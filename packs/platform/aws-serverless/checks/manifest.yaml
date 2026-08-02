@@ -1,0 +1,9 @@
+checks:
+  - law: EEP-IAC-01
+    kind: shell
+    command: "npm run synth"
+    proves: "The infrastructure definition synthesizes every stage from a clean checkout with no credentials."
+  - law: EEP-DLV-04
+    kind: builtin
+    command: "file-contains lib/environments.ts uat"
+    proves: "The environment list declares a non production stage alongside production."
