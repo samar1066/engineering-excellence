@@ -364,6 +364,19 @@ describe("runBuiltin docs-style", () => {
     expect(result.detail).toContain("docs/note.md");
     expect(result.detail).not.toContain("CLAUDE.md");
   });
+
+  /**
+   * macOS and Windows checkouts are case insensitive, so `claude.md` there is the same file the
+   * agent reads and the same file eep writes. Exempting only the uppercase spelling would gate the
+   * co owned file on exactly the machines most developers use.
+   */
+  it("ignores the agent file names whatever their casing", () => {
+    write(tmp, "claude.md", `# House rules\n\nWe ship fast ${EM_DASH} and we test.\n`);
+    write(tmp, "backend/Agents.md", `# Agents\n\nRead this ${EM_DASH} then work.\n`);
+    write(tmp, "docs/CLAUDE.MD", `# Docs rules\n\nKeep it short ${EM_DASH} always.\n`);
+
+    expect(runBuiltin("docs-style .", tmp).ok).toBe(true);
+  });
 });
 
 describe("runBuiltin docs-frontmatter", () => {

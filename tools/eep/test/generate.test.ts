@@ -408,6 +408,8 @@ describe("generateAgentFiles into agent files a repository already owns", () => 
     const below = "## Local conventions\n\nRun make dev before anything else.\n";
     const stale = [
       `${BLOCK_BEGIN_PREFIX}0.2.9; do not edit inside this block; regenerate with eep sync -->`,
+      AUTHORITY_SENTENCE,
+      "",
       "Stale generated body from an older release.",
       BLOCK_END,
     ].join("\n");
@@ -426,7 +428,7 @@ describe("generateAgentFiles into agent files a repository already owns", () => 
   });
 
   it("leaves a file carrying a stray begin marker untouched and names it in a warning", () => {
-    const damaged = `# House rules\n\n${BLOCK_BEGIN}\nHalf a block.\n`;
+    const damaged = `# House rules\n\n${BLOCK_BEGIN}\n${AUTHORITY_SENTENCE}\n\nHalf a block.\n`;
     writeOwn("CLAUDE.md", damaged);
 
     const warnings = captureWarnings(() => generateAgentFiles(tmp));
@@ -442,13 +444,134 @@ describe("generateAgentFiles into agent files a repository already owns", () => 
   });
 
   it("leaves a file whose end marker precedes its begin marker untouched", () => {
-    const damaged = `${BLOCK_END}\n\n# House rules\n\n${BLOCK_BEGIN}\n`;
+    const damaged = `${BLOCK_END}\n\n# House rules\n\n${BLOCK_BEGIN}\n${AUTHORITY_SENTENCE}\n`;
     writeOwn("CLAUDE.md", damaged);
 
     const warnings = captureWarnings(() => generateAgentFiles(tmp));
 
     expect(readText(tmp, "CLAUDE.md")).toBe(damaged);
     expect(warnings.join("\n")).toContain("CLAUDE.md");
+  });
+
+  /**
+   * A CLAUDE.md that documents eep is the likeliest brownfield file of all, and it will quote both
+   * markers inside a fenced example. Read as markers, the fenced begin and the real end below it
+   * would bracket every word the team wrote in between.
+   */
+  it("treats markers quoted inside a fenced code block as prose, not as a block", () => {
+    const own = [
+      "# House rules",
+      "",
+      "We use eep. Its generated region looks like this:",
+      "",
+      "```markdown",
+      BLOCK_BEGIN,
+      AUTHORITY_SENTENCE,
+      "",
+      "...the generated instructions...",
+      BLOCK_END,
+      "```",
+      "",
+      "Do not edit inside it.",
+      "",
+    ].join("\n");
+    writeOwn("CLAUDE.md", own);
+
+    generateAgentFiles(tmp);
+    const content = readText(tmp, "CLAUDE.md");
+
+    // Asserted on the tail rather than through splitOnBlock, whose naive line search would find the
+    // quoted begin inside the fence: that is the very confusion this test is about.
+    expect(content.startsWith(own)).toBe(true);
+    const appended = content.slice(own.length);
+    expect(appended.startsWith(`\n${BLOCK_BEGIN}\n${AUTHORITY_SENTENCE}\n`)).toBe(true);
+    expect(appended.endsWith(`${BLOCK_END}\n`)).toBe(true);
+    // The fenced example is still there, both quoted markers intact.
+    expect(content).toContain("```markdown");
+    expect(content).toContain("Do not edit inside it.");
+    // Exactly one real block was added, under the user's content, not inside their code sample.
+    expect(content.split(BLOCK_END).length - 1).toBe(2);
+  });
+
+  /**
+   * The probe the fence guard alone does not answer: a begin marker pasted into unfenced prose, with
+   * the team's own paragraphs under it and a real end marker somewhere below. Recognizing that begin
+   * would delete every paragraph between the two.
+   */
+  it("treats a begin marker not followed by the authority sentence as prose", () => {
+    const own = [
+      "# House rules",
+      "",
+      "Our generated block starts with this line:",
+      "",
+      BLOCK_BEGIN,
+      "",
+      "Everything from here down is ours, not eep's.",
+      "The billing squad owns app/orders.py.",
+      "",
+      "And it closes with this one:",
+      "",
+      BLOCK_END,
+      "",
+    ].join("\n");
+    writeOwn("CLAUDE.md", own);
+
+    generateAgentFiles(tmp);
+
+    // No begin qualifies, one end does, so this is malformed: nothing is written and every byte the
+    // team wrote between the two lines is still there.
+    expect(readText(tmp, "CLAUDE.md")).toBe(own);
+    expect(readText(tmp, "CLAUDE.md")).toContain("The billing squad owns app/orders.py.");
+  });
+
+  /**
+   * Merge residue: two well formed blocks. The first is refreshed so the gate's instructions are
+   * current, the rest are named and left alone, because deleting a region of somebody's file on a
+   * guess is the failure this whole module exists to prevent.
+   */
+  it("refreshes the first of several blocks and warns that stale ones remain", () => {
+    const staleBlock = [
+      `${BLOCK_BEGIN_PREFIX}0.2.9; do not edit inside this block; regenerate with eep sync -->`,
+      AUTHORITY_SENTENCE,
+      "",
+      "Stale body from a bad merge.",
+      BLOCK_END,
+    ].join("\n");
+    writeOwn("CLAUDE.md", `# House rules\n\n${staleBlock}\n\n## Notes\n\n${staleBlock}\n`);
+
+    const warnings = captureWarnings(() => generateAgentFiles(tmp));
+    const content = readText(tmp, "CLAUDE.md");
+
+    expect(blockOf(content)).toContain("## The laws in force");
+    // The second block is untouched, body and all.
+    expect(content).toContain("Stale body from a bad merge.");
+    expect(content.split(BLOCK_END).length - 1).toBe(2);
+    const message = warnings.join("\n");
+    expect(message).toContain("CLAUDE.md");
+    expect(message).toContain("more than one eep managed block");
+    expect(message).toContain("left in place");
+  });
+
+  /**
+   * The legacy headers are anchored to the start of the first line. A document that merely mentions
+   * the phrase, which is exactly what a repository's own notes about eep would do, is user content,
+   * and matching it mid line would replace that entire file with generated text.
+   */
+  it.each([
+    [
+      "root header mid line",
+      "Our onboarding mentions # Agent instructions (generated by eep 0.2.2).",
+    ],
+    ["component header mid line", "See the golden path (generated by eep 0.2.2) note in the wiki."],
+  ])("does not treat a %s as a file it generated", (_label, first) => {
+    const own = `${first}\n\nThe billing squad owns app/orders.py.\n`;
+    writeOwn("CLAUDE.md", own);
+
+    generateAgentFiles(tmp);
+    const content = readText(tmp, "CLAUDE.md");
+
+    expect(content.startsWith(own)).toBe(true);
+    expect(content).toContain("The billing squad owns app/orders.py.");
   });
 
   /**

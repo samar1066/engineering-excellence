@@ -5,7 +5,7 @@ import { execa } from "execa";
 import { describe, expect, it, vi } from "vitest";
 import { parse as parseYaml } from "yaml";
 import { installGitHook, plannedFiles, runAdopt } from "../src/commands/adopt.js";
-import { BLOCK_BEGIN, BLOCK_END } from "../src/lib/managed-block.js";
+import { AUTHORITY_SENTENCE, BLOCK_BEGIN, BLOCK_END } from "../src/lib/managed-block.js";
 import { repoRoot } from "../src/lib/schema.js";
 
 const corpusDir = repoRoot();
@@ -160,6 +160,40 @@ describe("runAdopt", () => {
       'eep: existing pre-commit hook preserved; add this line to it to chain the gate: .git/hooks/pre-commit-eep "$@" || exit 1',
     );
   });
+
+  /**
+   * The same repository one adoption later, after somebody pasted the gate script into their own
+   * hook rather than calling it. Their lint and test commands have to survive a re adopt.
+   */
+  it("keeps a foreign hook that carries our pasted script across a re adopt", async () => {
+    const targetDir = newTargetDir("eep-adopt-pasted-hook-");
+    await gitInit(targetDir);
+    writeFastApiPyproject(targetDir);
+
+    const ownHook = [
+      "#!/bin/sh",
+      "set -e",
+      "ruff check .",
+      "pytest -q",
+      "",
+      "# Installed by eep adopt. The gate runs before the commit exists.",
+      "if command -v eep >/dev/null 2>&1; then",
+      "  eep verify --changed || exit 1",
+      "fi",
+      "",
+    ].join("\n");
+    mkdirSync(join(targetDir, ".git", "hooks"), { recursive: true });
+    writeFileSync(join(targetDir, ".git", "hooks", "pre-commit"), ownHook);
+
+    await captureLogs(() =>
+      runAdopt({ targetDir, corpusDir, profile: "evolving", yes: true }).then(() => undefined),
+    );
+    await captureLogs(() =>
+      runAdopt({ targetDir, corpusDir, profile: "evolving", yes: true }).then(() => undefined),
+    );
+
+    expect(readFileSync(join(targetDir, ".git", "hooks", "pre-commit"), "utf8")).toBe(ownHook);
+  });
 });
 
 /**
@@ -214,6 +248,62 @@ describe("installGitHook", () => {
     expect(existsSync(join(dir, ".git", "hooks", "pre-commit-eep"))).toBe(false);
     expect(logs.join("\n")).not.toContain("preserved");
   });
+
+  /**
+   * The exact shape a repository reaches by following the chain instruction the wrong way: instead
+   * of calling `.git/hooks/pre-commit-eep`, they pasted its contents, marker comment and all, into
+   * the bottom of their own hook. Ownership matched on the marker anywhere in the file would then
+   * read that hook as ours and overwrite their ruff and pytest lines. Ownership is the marker on
+   * line 2, which this hook does not have.
+   */
+  it("treats a foreign hook that has our script pasted into it as foreign", async () => {
+    const dir = newGitDir("eep-hook-pasted-");
+    const foreign = [
+      "#!/bin/sh",
+      "set -e",
+      "ruff check .",
+      "pytest -q",
+      "",
+      "# Installed by eep adopt. The gate runs before the commit exists.",
+      "if command -v eep >/dev/null 2>&1; then",
+      "  eep verify --changed || exit 1",
+      "fi",
+      "",
+    ].join("\n");
+    const hookPath = join(dir, ".git", "hooks", "pre-commit");
+    writeFileSync(hookPath, foreign);
+
+    const logs = await captureLogs(() => installGitHook(dir));
+    // Re adopting must be as safe as adopting: run it twice.
+    await captureLogs(() => installGitHook(dir));
+
+    expect(readFileSync(hookPath, "utf8")).toBe(foreign);
+    expect(readFileSync(hookPath, "utf8")).toContain("ruff check .");
+    expect(readFileSync(hookPath, "utf8")).toContain("pytest -q");
+    expect(existsSync(join(dir, ".git", "hooks", "pre-commit-eep"))).toBe(true);
+    expect(logs.join("\n")).toContain("existing pre-commit hook preserved");
+  });
+
+  /**
+   * A repository that sets core.hooksPath has told git to run hooks from somewhere else entirely,
+   * which is what husky and lefthook do. Writing .git/hooks/pre-commit under that setting installs a
+   * file git will never execute: the gate would be reported as installed and would never run.
+   */
+  it("writes no .git/hooks/pre-commit when core.hooksPath is set", async () => {
+    const dir = newTargetDir("eep-hook-hookspath-");
+    await gitInit(dir);
+    await execa("git", ["config", "core.hooksPath", ".husky"], { cwd: dir });
+
+    const logs = await captureLogs(() => installGitHook(dir));
+
+    expect(existsSync(join(dir, ".git", "hooks", "pre-commit"))).toBe(false);
+    const chained = join(dir, ".git", "hooks", "pre-commit-eep");
+    expect(readFileSync(chained, "utf8")).toContain("eep verify --changed");
+    expect(statSync(chained).mode & 0o111).not.toBe(0);
+    expect(logs).toContain(
+      'eep: core.hooksPath is set (.husky); add this line to your hook manager\'s pre-commit: .git/hooks/pre-commit-eep "$@" || exit 1',
+    );
+  });
 });
 
 /**
@@ -256,7 +346,10 @@ describe("plannedFiles wording for the files eep does not own", () => {
 
   it("says refreshed when the file already carries a block", () => {
     const plan = planFor((dir) => {
-      writeFileSync(join(dir, "CLAUDE.md"), `# Ours\n\n${BLOCK_BEGIN}\nold\n${BLOCK_END}\n`);
+      writeFileSync(
+        join(dir, "CLAUDE.md"),
+        `# Ours\n\n${BLOCK_BEGIN}\n${AUTHORITY_SENTENCE}\n\nold\n${BLOCK_END}\n`,
+      );
     });
 
     expect(plan).toContain("update CLAUDE.md (managed block refreshed)");
@@ -264,7 +357,10 @@ describe("plannedFiles wording for the files eep does not own", () => {
 
   it("says skip when the markers are malformed, because that is what the write will do", () => {
     const plan = planFor((dir) => {
-      writeFileSync(join(dir, "CLAUDE.md"), `# Ours\n\n${BLOCK_BEGIN}\nno end marker\n`);
+      writeFileSync(
+        join(dir, "CLAUDE.md"),
+        `# Ours\n\n${BLOCK_BEGIN}\n${AUTHORITY_SENTENCE}\n\nno end marker\n`,
+      );
     });
 
     expect(plan).toContain("skip CLAUDE.md (malformed managed block; left untouched)");
@@ -300,5 +396,31 @@ describe("plannedFiles wording for the files eep does not own", () => {
       "preserve .git/hooks/pre-commit (yours); create .git/hooks/pre-commit-eep",
     );
     expect(plan).not.toContain("create .git/hooks/pre-commit");
+  });
+
+  // Our own script pasted into somebody's hook is still somebody's hook, and the plan has to say so
+  // before consent, not only the installer afterwards.
+  it("says preserve for a foreign hook carrying our marker below line 2", () => {
+    const plan = planFor((dir) => {
+      writeHook(
+        dir,
+        "#!/bin/sh\nruff check .\n\n# Installed by eep adopt. The gate runs before the commit exists.\neep verify --changed || exit 1\n",
+      );
+    });
+
+    expect(plan).toContain(
+      "preserve .git/hooks/pre-commit (yours); create .git/hooks/pre-commit-eep",
+    );
+  });
+
+  it("names the hook manager when core.hooksPath is set", async () => {
+    const dir = newTargetDir("eep-plan-hookspath-");
+    writeFastApiPyproject(dir);
+    await gitInit(dir);
+    await execa("git", ["config", "core.hooksPath", ".husky"], { cwd: dir });
+
+    expect(plannedFiles(dir, corpusDir, PACKS)).toContain(
+      "preserve hook manager (.husky); create .git/hooks/pre-commit-eep",
+    );
   });
 });

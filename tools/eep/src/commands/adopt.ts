@@ -2,6 +2,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync
 import { dirname, join } from "node:path";
 import { createInterface } from "node:readline/promises";
 import type { Command } from "commander";
+import { execaSync } from "execa";
 import fg from "fast-glob";
 import { stringify as stringifyYaml } from "yaml";
 import { corpusRoot } from "../lib/corpus-root.js";
@@ -90,9 +91,22 @@ const HOOK_CONTENT = [
   "",
 ].join("\n");
 
-// The substring that identifies a pre-commit hook as one this program wrote. Nothing else puts it
-// there, so its absence from an existing hook means a human or another tool owns that file.
+/**
+ * How a pre-commit hook is recognized as one this program wrote: the marker comment on line 2, which
+ * is the shape HOOK_CONTENT has had since it was introduced.
+ *
+ * The position is the whole point. Searching the file for the marker anywhere looked equivalent and
+ * was not: a repository following the chain instruction can end up with our own pre-commit-eep
+ * script pasted into the bottom of their hook, marker comment and all, and a search would then read
+ * that hook as ours and overwrite the lint and test commands above it. Anything that is not this
+ * program's own two opening lines belongs to whoever wrote it.
+ */
 const HOOK_MARKER = "Installed by eep adopt";
+const HOOK_MARKER_LINE_PREFIX = `# ${HOOK_MARKER}`;
+
+function isEepHook(content: string): boolean {
+  return (content.split("\n")[1] ?? "").startsWith(HOOK_MARKER_LINE_PREFIX);
+}
 
 // Where the gate goes when the repository already has a pre-commit hook of its own. A sibling file
 // rather than a rename or an edit: renaming breaks whatever installed the original (husky, lefthook,
@@ -108,22 +122,53 @@ const CHAINED_HOOK_REL_PATH = `${HOOK_REL_DIR}/${CHAINED_HOOK_NAME}`;
 const CHAIN_LINE = `${CHAINED_HOOK_REL_PATH} "$@" || exit 1`;
 
 /**
+ * The value of `core.hooksPath` in this repository, or null when it is unset or unreadable.
+ *
+ * A repository that sets it has told git to look somewhere else entirely, which is what husky,
+ * lefthook, and every other hook manager do. Writing `.git/hooks/pre-commit` there installs a file
+ * git will never run, so the gate would be silently absent while every output said it was installed.
+ * Read with the synchronous form deliberately: both the planner and the installer need the answer,
+ * the planner is called from a synchronous plan printer shared with the root sync, and an async
+ * signature would spread through both commands for one `git config` call.
+ *
+ * `reject: false` because git exits non zero when the key is simply unset, which is the common case
+ * and not an error; the catch covers a machine with no git at all.
+ */
+function hooksPathConfig(targetDir: string): string | null {
+  try {
+    const result = execaSync("git", ["config", "--get", "core.hooksPath"], {
+      cwd: targetDir,
+      reject: false,
+    });
+    const value = result.stdout.trim();
+    return value === "" ? null : value;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * The pre-commit hook's line in the plan, saying what will actually happen to it.
  *
  * The list used to name this path unconditionally, which was true when this program overwrote
- * whatever it found. Now the same three cases the install step distinguishes have to be visible
- * before consent, because the one a reader most needs to see is the one where their own hook stays
- * and the gate lands beside it under a different name they would otherwise never look for.
+ * whatever it found. Now the same four cases the install step distinguishes have to be visible
+ * before consent, because the ones a reader most needs to see are those where their own hook, or
+ * their hook manager, stays and the gate lands beside it under a name they would otherwise never
+ * look for.
  *
- * The absent case covers a repository with no .git at all, and a worktree or submodule checkout
+ * The create case covers a repository with no .git at all, and a worktree or submodule checkout
  * where .git is a plain file: no hook file exists at that path in either, so `create` is what the
  * run will attempt, and installGitHook prints its own warning when it turns out it cannot. That is
  * the same precedent this list has always followed, rather than silently omitting the entry.
  */
 function hookPlanLine(targetDir: string): string {
+  const hooksPath = hooksPathConfig(targetDir);
+  if (hooksPath !== null) {
+    return `preserve hook manager (${hooksPath}); create ${CHAINED_HOOK_REL_PATH}`;
+  }
   const hookPath = join(targetDir, ".git", "hooks", "pre-commit");
   if (!existsSync(hookPath)) return `create ${HOOK_REL_PATH}`;
-  if (readFileSync(hookPath, "utf8").includes(HOOK_MARKER)) {
+  if (isEepHook(readFileSync(hookPath, "utf8"))) {
     return `update ${HOOK_REL_PATH} (eep managed)`;
   }
   return `preserve ${HOOK_REL_PATH} (yours); create ${CHAINED_HOOK_REL_PATH}`;
@@ -211,16 +256,34 @@ export function installGitHook(targetDir: string): void {
   mkdirSync(hooksDir, { recursive: true });
   const hookPath = join(hooksDir, "pre-commit");
 
+  const writeChainedHook = (): void => {
+    const chainedPath = join(hooksDir, CHAINED_HOOK_NAME);
+    writeFileSync(chainedPath, HOOK_CONTENT);
+    chmodSync(chainedPath, 0o755);
+  };
+
+  // core.hooksPath tells git to run hooks from somewhere else entirely, which is exactly what husky
+  // and lefthook set. Writing .git/hooks/pre-commit under it produces a file git will never execute:
+  // the gate would be reported as installed and would never once run. The manager's directory is not
+  // written into either, because its layout is the manager's to define. So the gate is written where
+  // it can be called from, and the caller is told the one line that calls it.
+  const hooksPath = hooksPathConfig(targetDir);
+  if (hooksPath !== null) {
+    writeChainedHook();
+    console.log(
+      `eep: core.hooksPath is set (${hooksPath}); add this line to your hook manager's pre-commit: ${CHAIN_LINE}`,
+    );
+    return;
+  }
+
   // A pre-commit hook this program did not write belongs to whatever put it there, and it is
   // frequently the only automation a team has: linting, secret scanning, commit message rules,
   // sometimes their whole CI in miniature. Overwriting it (which every release through 0.2.2 did)
   // silently deletes that automation and nothing in the repository records it ever existed. So the
   // gate is written beside it and the one line that chains the two is printed, which leaves the
   // decision, and the ordering, with the person who owns the original hook.
-  if (existsSync(hookPath) && !readFileSync(hookPath, "utf8").includes(HOOK_MARKER)) {
-    const chainedPath = join(hooksDir, CHAINED_HOOK_NAME);
-    writeFileSync(chainedPath, HOOK_CONTENT);
-    chmodSync(chainedPath, 0o755);
+  if (existsSync(hookPath) && !isEepHook(readFileSync(hookPath, "utf8"))) {
+    writeChainedHook();
     console.log(
       `eep: existing pre-commit hook preserved; add this line to it to chain the gate: ${CHAIN_LINE}`,
     );
