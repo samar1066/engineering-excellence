@@ -1,0 +1,12 @@
+# Keeps the pinned action SHAs and the npm dependencies current through reviewed
+# pull requests, which the branch protection and CI gate then judge before merge.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly

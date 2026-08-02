@@ -1,0 +1,8 @@
+# Keeps the npm dependencies of this infrastructure project current through
+# reviewed pull requests, which your branch protection and CI gate then judge.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
