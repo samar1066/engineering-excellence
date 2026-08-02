@@ -108,6 +108,11 @@ jobs:
   # always() and inspects each result because without always() this job is itself skipped whenever
   # any component job is skipped, and a skipped status check is not a passing one.
   #
+  # Accepting skipped is deliberate future proofing rather than a currently reachable branch: with
+  # the guards on the steps, an absent component still concludes success, so none of the four jobs
+  # can report skipped today. It is accepted anyway so that adding a job level condition later
+  # degrades to a green gate rather than a permanently red one.
+  #
   # eep verify is the whole gate and the command to run locally before pushing: make verify at the
   # repository root runs it over every pack in .eep/lock.yaml. The jobs above run those same
   # component gates directly, one job per component, until engineering-excellence ships on npm and

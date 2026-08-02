@@ -18,6 +18,11 @@
 #
 # The image is tagged with the commit sha, which is immutable and names exactly one source
 # revision. That one tag is what every stage below deploys, which is the whole point of the file.
+#
+# Stack naming contract, shared with the aws-cdk pack: underscores in the project name become
+# hyphens, suffixed by stage. CloudFormation forbids underscores in a stack name while eep init
+# permits them in a project name, so a project named shop_api synthesizes shop-api-dev, and each
+# deploy job below derives the same normalized prefix before it calls the CDK.
 name: deploy
 on:
   workflow_dispatch:
@@ -59,6 +64,7 @@ jobs:
           set -eu
           tag="${REQUESTED_TAG:-$COMMIT_SHA}"
           case "$tag" in
+            "") echo "refusing an empty image tag" ; exit 1 ;;
             *[!A-Za-z0-9._-]*) echo "refusing image tag: $tag" ; exit 1 ;;
           esac
           echo "image-tag=$tag" >> "$GITHUB_OUTPUT"
@@ -115,11 +121,17 @@ jobs:
       - name: install infra dependencies
         working-directory: infra
         run: npm ci
+      - name: derive the stack prefix
+        # Underscores become hyphens: see the stack naming contract at the top of this file.
+        run: |
+          set -eu
+          prefix="$(printf %s '{{project_name}}' | tr '_' '-')"
+          echo "STACK_PREFIX=$prefix" >> "$GITHUB_ENV"
       - name: deploy dev
         working-directory: infra
         env:
           IMAGE_TAG: ${{ needs.build.outputs.image-tag }}
-        run: npx cdk deploy {{project_name}}-dev --require-approval never --context "imageTag=$IMAGE_TAG"
+        run: npx cdk deploy "${STACK_PREFIX}-dev" --require-approval never --context "imageTag=$IMAGE_TAG"
 
   # Stage two, still non production. Attach required reviewers to the uat environment so this stage
   # waits for a person, and so production can never be reached without someone having looked.
@@ -142,11 +154,17 @@ jobs:
       - name: install infra dependencies
         working-directory: infra
         run: npm ci
+      - name: derive the stack prefix
+        # Underscores become hyphens: see the stack naming contract at the top of this file.
+        run: |
+          set -eu
+          prefix="$(printf %s '{{project_name}}' | tr '_' '-')"
+          echo "STACK_PREFIX=$prefix" >> "$GITHUB_ENV"
       - name: deploy uat
         working-directory: infra
         env:
           IMAGE_TAG: ${{ needs.deploy-dev.outputs.image-tag }}
-        run: npx cdk deploy {{project_name}}-uat --require-approval never --context "imageTag=$IMAGE_TAG"
+        run: npx cdk deploy "${STACK_PREFIX}-uat" --require-approval never --context "imageTag=$IMAGE_TAG"
 
   # Production, last. The needs line below is the structural promise EEP-DLV-03 asks for: there is
   # no path through this file that reaches production without uat having succeeded first, and the
@@ -169,8 +187,14 @@ jobs:
       - name: install infra dependencies
         working-directory: infra
         run: npm ci
+      - name: derive the stack prefix
+        # Underscores become hyphens: see the stack naming contract at the top of this file.
+        run: |
+          set -eu
+          prefix="$(printf %s '{{project_name}}' | tr '_' '-')"
+          echo "STACK_PREFIX=$prefix" >> "$GITHUB_ENV"
       - name: deploy prod
         working-directory: infra
         env:
           IMAGE_TAG: ${{ needs.deploy-uat.outputs.image-tag }}
-        run: npx cdk deploy {{project_name}}-prod --require-approval never --context "imageTag=$IMAGE_TAG"
+        run: npx cdk deploy "${STACK_PREFIX}-prod" --require-approval never --context "imageTag=$IMAGE_TAG"

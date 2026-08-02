@@ -103,6 +103,21 @@ stack name differs (`-dev`, `-uat`, `-prod`), the environment scoped variables
 may differ, and everything else about the artifact is identical by
 construction.
 
+Two names that look like drift and are not. The GitHub environment guarding
+the last stage is `production`, while the CDK stage suffix that stage deploys
+is `-prod`. They are different namespaces: one is the protection rule a person
+approves in repository settings, the other is part of a CloudFormation stack
+name, and each follows its own pack's convention.
+
+Stack names follow one contract shared with the aws-cdk pack: underscores in
+the project name become hyphens, suffixed by stage. CloudFormation forbids an
+underscore in a stack name while `eep init` permits one in a project name, so
+a project named `shop_api` synthesizes `shop-api-dev` and each deploy job
+derives that same normalized prefix into `STACK_PREFIX` before it calls the
+CDK. Passing the raw project name instead fails with `No stacks match` for
+every project whose name contains an underscore, and for no other project,
+which is why it survives a casual test.
+
 ## Branch freedom
 
 The pipeline binds to environments, not to branches. Nothing in this pack
@@ -151,12 +166,16 @@ policy.
 This pack is designed to be one of several in a repository, and it shares
 exactly two contracts with its neighbours.
 
-With the aws-cdk pack: the context key `imageTag`. Every deploy job passes
-`--context imageTag=<tag>` to `npx cdk deploy` from the `infra` directory, and
-the CDK application reads that context to decide which image its service runs.
-Stack names follow `<project>-dev`, `<project>-uat`, and `<project>-prod`,
-rendered from the project name at `eep init`. If a stack is renamed, the three
-deploy steps are what changes.
+With the aws-cdk pack: the context key `imageTag` and the stack naming
+contract. Every deploy job passes `--context imageTag=<tag>` to `npx cdk
+deploy` from the `infra` directory, and the CDK application reads that context
+to decide which image its service runs. Stack names are
+`${STACK_PREFIX}-dev`, `-uat`, and `-prod`, where `STACK_PREFIX` is the
+project name with underscores normalized to hyphens, exactly as the CDK
+application normalizes it when it names the stacks. Both sides perform the
+same translation on the same input rather than one side passing a value to the
+other, so a rename means editing both; that is the cost of a stack name being
+a CloudFormation identifier rather than a deployment parameter.
 
 With the containers pack: the path `docker/backend.Dockerfile`, and the shape
 of the build itself. The canonical form is
