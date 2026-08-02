@@ -1,0 +1,63 @@
+# Publishes the npm package with provenance when a version tag is pushed.
+#
+# One time setup on npmjs.com (package settings for engineering-excellence):
+# add a Trusted Publisher pointing at this repository (samar1066/engineering-excellence)
+# and this workflow file name (release.yml). After that, no tokens and no one
+# time passwords are needed: pushing a tag like v0.3.0 runs the full gauntlet
+# and publishes with a signed provenance statement linking the package to this
+# repository and commit.
+name: release
+on:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: write
+  id-token: write
+jobs:
+  gauntlet:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm, cache-dependency-path: tools/eep/package-lock.json }
+      - uses: astral-sh/setup-uv@v3
+      - run: npm ci
+        working-directory: tools/eep
+      - run: npm test
+        working-directory: tools/eep
+      - run: npm run lint
+        working-directory: tools/eep
+      - run: npx tsx src/index.ts corpus validate
+        working-directory: tools/eep
+      - name: validate every pack
+        run: |
+          for p in packs/*/*/; do
+            (cd tools/eep && npx tsx src/index.ts pack validate "../../$p")
+          done
+  publish:
+    needs: gauntlet
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+        working-directory: tools/eep
+      - name: guard tag matches package version
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG="$(node -p "require('./tools/eep/package.json').version")"
+          if [ "$TAG" != "$PKG" ]; then
+            echo "tag $TAG does not match package version $PKG" >&2
+            exit 1
+          fi
+      - run: npm publish --provenance --access public
+        working-directory: tools/eep
+      - name: attach tarball to the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd tools/eep && npm pack
+          gh release upload "$GITHUB_REF_NAME" engineering-excellence-*.tgz --clobber || true
