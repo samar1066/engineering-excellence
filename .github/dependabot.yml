@@ -1,0 +1,13 @@
+# Keeps the pinned action SHAs and the CLI's dependencies current through
+# reviewed pull requests, which the branch protection and CI gates then judge.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: npm
+    directory: /tools/eep
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
