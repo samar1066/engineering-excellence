@@ -1,5 +1,5 @@
 {
-  "name": "eep",
+  "name": "eep-cli",
   "version": "0.1.0",
   "private": true,
   "description": "Engineering Excellence Program CLI",
