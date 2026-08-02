@@ -50,43 +50,26 @@ Naming no framework (`npx engineering-excellence init shop`) keeps that single a
 
 ## What we support
 
-**Backend**
-
-| Framework | Token | Status |
-|---|---|---|
-| C++ | `cpp` | In development |
-| FastAPI (Python) | `fastapi` | Available |
-| Go | `go` | In development |
-| Java Spring | `java` | In development |
-| .NET ASP.NET | `dotnet` | In development |
-| Node and TypeScript services | `node` | Available |
-| SQL and Postgres | `sql` | In development |
-
-**Frontend**
-
-| Framework | Token | Status |
-|---|---|---|
-| Angular | `angular` | In development |
-| React | `react` | Available |
-| React Native | `react-native` | In development |
-
-**Infrastructure and containers**
-
-| Platform | Token | Status |
-|---|---|---|
-| AWS CDK Fargate | `cdk` | Available |
-| AWS serverless | `aws` | Available |
-| Containers and Kubernetes | `docker` or `k8s` | Available |
-| Power Platform | `power-platform` | In development |
-| Terraform | `terraform` | In development |
-
-**Delivery and CI**
-
-| Platform | Token | Status |
-|---|---|---|
-| Azure DevOps | `azure-devops` | In development |
-| GitHub Actions | `github-actions` | Available |
-| GitLab CI | `gitlab` | In development |
+| Category | Framework or platform | Token | Status |
+|---|---|---|---|
+| **Backend** | C++ | `cpp` | In development |
+| | FastAPI (Python) | `fastapi` | Available |
+| | Go | `go` | In development |
+| | Java Spring | `java` | In development |
+| | .NET ASP.NET | `dotnet` | In development |
+| | Node and TypeScript services | `node` | Available |
+| | SQL and Postgres | `sql` | In development |
+| **Frontend** | Angular | `angular` | In development |
+| | React | `react` | Available |
+| | React Native | `react-native` | In development |
+| **Infrastructure** | AWS CDK Fargate | `cdk` | Available |
+| | AWS serverless | `aws` | Available |
+| | Containers and Kubernetes | `docker` or `k8s` | Available |
+| | Power Platform | `power-platform` | In development |
+| | Terraform | `terraform` | In development |
+| **Delivery and CI** | Azure DevOps | `azure-devops` | In development |
+| | GitHub Actions | `github-actions` | Available |
+| | GitLab CI | `gitlab` | In development |
 
 The list grows without redesign: every framework is a pack held to one
 executable contract, and the CLI discovers packs at runtime, so a new
