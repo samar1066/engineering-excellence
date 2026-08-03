@@ -121,5 +121,25 @@ wiring:
               to: "          IMAGE_TAG: imageTag,\n          NOTES_TABLE_NAME: notes.table.tableName,"
             - from: '    this.service.targetGroup.configureHealthCheck({'
               to: "    // The Fargate task role reads and writes the note table it is handed the name of.\n    notes.table.grantReadWriteData(this.service.taskDefinition.taskRole);\n\n    this.service.targetGroup.configureHealthCheck({"
+    # The serverless compute variant: the same table construct composes into the API Gateway plus
+    # Lambda stack instead of the Fargate one. The construct file is identical (it is a plain Construct
+    # with no compute coupling); only the anchors differ, targeting api-stack.ts, its ESM `.js` imports,
+    # and the Lambda function rather than the Fargate service. The Lambda is itself an IGrantable, so
+    # the grant hands access to the function directly rather than to a task role.
+    aws-serverless:
+      copy:
+        - from: scaffold/construct/note-table.ts
+          to: lib/note-table.ts
+      patch:
+        - file: lib/api-stack.ts
+          replace:
+            - from: 'import type { Environment } from "./environments.js";'
+              to: "import type { Environment } from \"./environments.js\";\nimport { NoteTable } from \"./note-table.js\";"
+            - from: '    this.handler = new DockerImageFunction(this, "ApiFunction", {'
+              to: "    const notes = new NoteTable(this, \"Notes\", {\n      owner: \"{{project_name}}\",\n      environment: environment.stage,\n    });\n\n    this.handler = new DockerImageFunction(this, \"ApiFunction\", {"
+            - from: '        IMAGE_TAG: imageTag,'
+              to: "        IMAGE_TAG: imageTag,\n        NOTES_TABLE_NAME: notes.table.tableName,"
+            - from: '    this.api = new HttpApi(this, "HttpApi", {'
+              to: "    // The API Lambda reads and writes the note table it is handed the name of.\n    notes.table.grantReadWriteData(this.handler);\n\n    this.api = new HttpApi(this, \"HttpApi\", {"
 authors: [{ name: Samar Swami, github: "@samar1066" }]
 maintainers: ["@samar1066"]

@@ -40,6 +40,16 @@ backends:
   fastapi: python-fastapi
   node: typescript-node
 
+# compute names the swappable platform pack that owns how the app runs. `--serverless` swaps the
+# default Fargate compute named in core for the serverless one, leaving every other core pack in
+# place: the same full app composes onto AWS Lambda behind API Gateway instead of ECS Fargate behind
+# a load balancer, and the data, auth, and storage packs compose their constructs into the serverless
+# infra stack rather than the Fargate one. fargate is the default already listed in core (aws-cdk);
+# serverless composes aws-serverless instead. Requesting no `--serverless` keeps core exactly as written.
+compute:
+  fargate: aws-cdk
+  serverless: aws-serverless
+
 # pillars are the cross service laws only a composition can assert. They stay vendor neutral in
 # doctrine so a second cloud blueprint reuses them; the AWS packs bind each one where they can.
 pillars:

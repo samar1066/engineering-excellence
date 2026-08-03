@@ -93,5 +93,31 @@ wiring:
               to: "    // The Fargate task role reads and writes the uploads bucket it is handed the name of.\n    uploads.bucket.grantReadWrite(this.service.taskDefinition.taskRole);\n\n    this.service.targetGroup.configureHealthCheck({"
             - from: '    new CfnOutput(this, "ServiceUrl", {'
               to: "    new CfnOutput(this, \"SiteUrl\", {\n      value: `https://${frontend.distribution.distributionDomainName}`,\n      description: \"Public HTTPS URL of the CloudFront distribution serving the frontend\",\n    });\n\n    new CfnOutput(this, \"ServiceUrl\", {"
+    # The serverless compute variant: the same uploads bucket and frontend hosting constructs compose
+    # into the API Gateway plus Lambda stack instead of the Fargate one. Both construct files are
+    # identical; only the anchors differ, targeting api-stack.ts, its ESM `.js` imports, the Lambda
+    # (itself an IGrantable) for the uploads grant, and the StageName output the SiteUrl output is
+    # inserted before. The CloudFront distribution fronts the S3 hosted single page app exactly as it
+    # does on the Fargate path: it is the frontend's edge, independent of whether the backend runs as a
+    # Lambda or a service, so the construct carries over unchanged.
+    aws-serverless:
+      copy:
+        - from: scaffold/construct/frontend-hosting.ts
+          to: lib/frontend-hosting.ts
+        - from: scaffold/construct/uploads-bucket.ts
+          to: lib/uploads-bucket.ts
+      patch:
+        - file: lib/api-stack.ts
+          replace:
+            - from: 'import type { Environment } from "./environments.js";'
+              to: "import type { Environment } from \"./environments.js\";\nimport { FrontendHosting } from \"./frontend-hosting.js\";\nimport { UploadsBucket } from \"./uploads-bucket.js\";"
+            - from: '    this.handler = new DockerImageFunction(this, "ApiFunction", {'
+              to: "    const uploads = new UploadsBucket(this, \"Uploads\", {\n      owner: \"{{project_name}}\",\n      environment: environment.stage,\n    });\n\n    const frontend = new FrontendHosting(this, \"Frontend\", {\n      owner: \"{{project_name}}\",\n      environment: environment.stage,\n      sitePath: \"../frontend/dist\",\n    });\n\n    this.handler = new DockerImageFunction(this, \"ApiFunction\", {"
+            - from: '        IMAGE_TAG: imageTag,'
+              to: "        IMAGE_TAG: imageTag,\n        UPLOADS_BUCKET_NAME: uploads.bucket.bucketName,"
+            - from: '    this.api = new HttpApi(this, "HttpApi", {'
+              to: "    // The API Lambda reads and writes the uploads bucket it is handed the name of.\n    uploads.bucket.grantReadWrite(this.handler);\n\n    this.api = new HttpApi(this, \"HttpApi\", {"
+            - from: '    new CfnOutput(this, "StageName", {'
+              to: "    new CfnOutput(this, \"SiteUrl\", {\n      value: `https://${frontend.distribution.distributionDomainName}`,\n      description: \"Public HTTPS URL of the CloudFront distribution serving the frontend\",\n    });\n\n    new CfnOutput(this, \"StageName\", {"
 authors: [{ name: Samar Swami, github: "@samar1066" }]
 maintainers: ["@samar1066"]

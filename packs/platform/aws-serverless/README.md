@@ -17,8 +17,8 @@ This is the serverless alternative to the aws-cdk pack's Fargate path. The two m
 
 ## What this pack gives you
 
-- `STACK.md`: the golden path an AI coding agent reads before writing any infrastructure code here, including the promotion contract and the AWS Lambda Powertools upgrade for real handlers.
-- A runnable CDK v2 scaffold under `scaffold/` with three environments, one parameterized API stack, an inline handler that keeps `cdk synth` free of bundlers, and template assertions that run with no credentials.
+- `STACK.md`: the golden path an AI coding agent reads before writing any infrastructure code here, including the promotion contract and how the container image function runs the backend behind the gateway.
+- A runnable CDK v2 scaffold under `scaffold/` with three environments, one parameterized API stack, a container image function referenced by ECR repository and tag that keeps `cdk synth` free of bundlers, Docker, and the network, and template assertions that run with no credentials.
 - Blessed configuration templates under `templates/config/` for TypeScript and biome.
 - Executable checks in `checks/manifest.yaml` that map each implemented law to the command proving it.
 - One command entry points in the scaffold `Makefile`: `make setup`, `make test`, `make synth`, `make verify`.
@@ -46,8 +46,8 @@ It declines the thirteen stack scoped laws, each with a recorded reason in `pack
 | vitest with the aws-cdk-lib assertions module | | Asserts over the synthesized template, which is the artifact AWS actually receives. |
 | cdk synth over every stage | | Renders dev, uat, and prod from a clean checkout with no credentials and no bundler. |
 | cdk deploy into a sandbox account, then a request against the stack's ApiUrl output | | The only proof that survives a real deployment; run against an account rather than shipped in this scaffold. |
-| aws-lambda-powertools logger | | Structured JSON with invocation context inside handlers; the inline scaffold handler prints the same shape until the first bundled handler pulls the library in. |
-| AWS X-Ray active tracing with the aws-lambda-powertools tracer | | The function opts into X-Ray in the scaffold, and the tracer adds handler subsegments to that segment. |
+
+The function runs a container image referenced by ECR repository and tag, so the log line shape and the trace propagation belong to that image (the backend component), not to this component: `pack.yaml` records logging and tracing as declined for that reason, while the stack still provisions the log group and turns on X-Ray active tracing.
 
 ## Standalone use
 

@@ -38,6 +38,19 @@ const NODE_CORE = [
   "typescript-node",
 ];
 
+// The same core with --serverless: aws-cdk is gone and aws-serverless takes its place, so the sorted
+// lock names the serverless compute where it named the Fargate one. Every other pack is unchanged.
+const SERVERLESS_CORE = [
+  "aws-cognito",
+  "aws-dynamodb",
+  "aws-s3",
+  "aws-serverless",
+  "containers-k8s",
+  "github-actions",
+  "python-fastapi",
+  "react",
+];
+
 const COMPOSE_TIMEOUT = 120_000;
 
 function newTargetDir(prefix: string): string {
@@ -256,6 +269,90 @@ describe("init with a blueprint token", () => {
         expect(app).toContain('scope.addHook("preHandler", authGuard);');
         expect(app).toContain("new DynamoNoteRepository()");
         expect(app).not.toContain("new MemoryNoteRepository()");
+
+        // The wired swap is committed with the scaffold rather than left as an untracked edit.
+        const status = await execa("git", ["status", "--porcelain"], { cwd: projectDir });
+        expect(status.stdout.trim()).toBe("");
+      } finally {
+        rmSync(targetDir, { recursive: true, force: true });
+      }
+    },
+    COMPOSE_TIMEOUT,
+  );
+
+  it(
+    "composes onto the serverless compute, wiring the table, pool, bucket, and edge into the API stack",
+    async () => {
+      const targetDir = newTargetDir("eep-blueprint-serverless-");
+      try {
+        const output = await captureLog(async () => {
+          await runInit({
+            name: "shop",
+            targetDir,
+            corpusDir,
+            tokens: ["aws-fullstack"],
+            serverless: true,
+            installOffer: false,
+          });
+        });
+
+        const projectDir = join(targetDir, "shop");
+
+        // The lock records aws-serverless in place of aws-cdk; every other core pack is unchanged,
+        // which is the whole contract of --serverless.
+        expect(lockPackNames(projectDir)).toEqual(SERVERLESS_CORE);
+        expect(output).toContain("aws-serverless");
+
+        // The serverless component is the one that composed; the Fargate infra component is absent.
+        expect(existsSync(join(projectDir, "infra-serverless", "cdk.json"))).toBe(true);
+        expect(existsSync(join(projectDir, "infra"))).toBe(false);
+
+        // The backend wiring is independent of compute: the repository is still the DynamoDB one and
+        // the notes routes are still guarded, exactly as on the Fargate path.
+        const deps = readFileSync(join(projectDir, "backend", "app", "api", "deps.py"), "utf8");
+        expect(deps).toContain("DynamoNoteRepository()");
+        expect(deps).not.toContain("MemoryNoteRepository");
+        const notesRoute = readFileSync(
+          join(projectDir, "backend", "app", "api", "routes", "notes.py"),
+          "utf8",
+        );
+        expect(notesRoute).toContain("Depends(require_user)");
+
+        // Every construct composed into the serverless stack, copied beside it.
+        for (const file of [
+          "note-table.ts",
+          "user-pool.ts",
+          "frontend-hosting.ts",
+          "uploads-bucket.ts",
+        ]) {
+          expect(existsSync(join(projectDir, "infra-serverless", "lib", file)), file).toBe(true);
+        }
+
+        // The API stack instantiates the Lambda, every construct, wires their names into the Lambda
+        // environment, and grants the Lambda role, all against api-stack.ts rather than a Fargate stack.
+        const stack = readFileSync(
+          join(projectDir, "infra-serverless", "lib", "api-stack.ts"),
+          "utf8",
+        );
+        expect(stack).toContain('new DockerImageFunction(this, "ApiFunction", {');
+        expect(stack).toContain('import { NoteTable } from "./note-table.js";');
+        expect(stack).toContain('const notes = new NoteTable(this, "Notes", {');
+        expect(stack).toContain("NOTES_TABLE_NAME: notes.table.tableName,");
+        expect(stack).toContain("notes.table.grantReadWriteData(this.handler);");
+        expect(stack).toContain('import { UserPool } from "./user-pool.js";');
+        expect(stack).toContain("COGNITO_USER_POOL_ID: auth.pool.userPoolId,");
+        expect(stack).toContain("COGNITO_CLIENT_ID: auth.client.userPoolClientId,");
+        expect(stack).toContain('import { UploadsBucket } from "./uploads-bucket.js";');
+        expect(stack).toContain("UPLOADS_BUCKET_NAME: uploads.bucket.bucketName,");
+        expect(stack).toContain("uploads.bucket.grantReadWrite(this.handler);");
+        expect(stack).toContain('const frontend = new FrontendHosting(this, "Frontend", {');
+        expect(stack).toContain("distribution.distributionDomainName");
+        // The owner tag carries the project name the wiring pass substituted.
+        expect(stack).toContain('owner: "shop",');
+        // AWS_REGION is reserved on Lambda, so unlike the Fargate recipe it is never injected as an
+        // environment variable here (the runtime supplies it). The `AWS_REGION:` env key is absent;
+        // the scaffold's own comment explaining why is prose, not an env entry.
+        expect(stack).not.toContain("AWS_REGION:");
 
         // The wired swap is committed with the scaffold rather than left as an untracked edit.
         const status = await execa("git", ["status", "--porcelain"], { cwd: projectDir });

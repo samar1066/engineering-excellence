@@ -48,11 +48,13 @@ toolchain:
   unit_test: { tool: "vitest with the aws-cdk-lib assertions module", rationale: "Asserts over the synthesized template, which is the artifact AWS actually receives." }
   integration_test: { tool: "cdk synth over every stage", rationale: "Renders dev, uat, and prod from a clean checkout with no credentials and no bundler." }
   e2e_test: { tool: "cdk deploy into a sandbox account, then a request against the stack's ApiUrl output", rationale: "The only proof that survives a real deployment; run against an account rather than shipped in this scaffold." }
-  logging: { tool: "aws-lambda-powertools logger", rationale: "Structured JSON with invocation context inside handlers; the inline scaffold handler prints the same shape until the first bundled handler pulls the library in." }
-  tracing: { tool: "AWS X-Ray active tracing with the aws-lambda-powertools tracer", rationale: "The function opts into X-Ray in the scaffold, and the tracer adds handler subsegments to that segment." }
   declined:
     - category: boundaries
       reason: "Three source files with one import direction have no layer graph; a boundary tool here would guard nothing."
+    - category: logging
+      reason: "The function's log group and its retention are provisioned here, but the shape of a log line belongs to the container image the function runs, which is the backend component the stack pack owns."
+    - category: tracing
+      reason: "The function opts into X-Ray active tracing here, yet the spans and their propagation begin inside the container image the function runs; a synth is a local process with no span of its own to propagate."
     - category: api_test
       reason: "This component exposes no API of its own: the HTTP surface belongs to the handlers behind the gateway."
     - category: coverage

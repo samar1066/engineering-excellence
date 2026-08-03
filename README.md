@@ -174,19 +174,19 @@ What lands in `myapp/`:
    generated instructions adds a persisted, authenticated feature and the gate
    stays green.
 
-The backend is FastAPI by default. Prefer Node.js? Add `--backend node` for a
-TypeScript and Node.js backend instead, wired to the same DynamoDB and Cognito
-services and held to the same gate:
+Two variants are one flag away. Add `--backend node` for a TypeScript and Node.js
+backend instead of FastAPI, and `--serverless` to run on AWS Lambda behind API
+Gateway instead of Fargate, both wired to the same DynamoDB, Cognito, and S3:
 
 ```bash
 npx engineering-excellence init myapp aws-fullstack --backend node
+npx engineering-excellence init myapp aws-fullstack --serverless
 ```
 
-An API Gateway serverless compute path and optional capability slices
-(asynchronous messaging, search, caching, streaming, and SQL, added with
-`--with`) are the next variants on the way, each shipping as its own validated
-pack. The laws underneath every pack stay cloud neutral, so an Azure or Google
-Cloud blueprint reuses them.
+Optional capability slices (asynchronous messaging, search, caching, streaming,
+and SQL, added with `--with`) are the next variants on the way, each shipping as
+its own validated pack. The laws underneath every pack stay cloud neutral, so an
+Azure or Google Cloud blueprint reuses them.
 
 ## Agents and tools it works with
 

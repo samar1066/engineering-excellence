@@ -7,9 +7,10 @@ import { environmentFor } from "../lib/environments.js";
 /**
  * The synthesized CloudFormation template for one stage.
  *
- * Every assertion below runs against the template rather than against the TypeScript that built
- * it, because the template is what AWS actually receives: a construct that compiles cleanly and
- * renders the wrong resource is the failure worth catching.
+ * Every assertion below runs against the template rather than against the TypeScript that built it,
+ * because the template is what AWS actually receives: a construct that compiles cleanly and renders
+ * the wrong resource is the failure worth catching. Synthesis reaches no network and needs no
+ * credentials, because the function's image is referenced by repository and tag rather than built.
  */
 function templateFor(stage: string): Template {
   const app = new App();
@@ -25,7 +26,7 @@ function memorySizeOf(template: Template): number {
 }
 
 describe("ApiStack", () => {
-  it("puts an HTTP API in front of the handler", () => {
+  it("puts an HTTP API in front of the handler and routes every path to it", () => {
     const template = templateFor("dev");
 
     template.resourceCountIs("AWS::ApiGatewayV2::Api", 1);
@@ -33,20 +34,24 @@ describe("ApiStack", () => {
       "AWS::ApiGatewayV2::Api",
       Match.objectLike({ ProtocolType: "HTTP" }),
     );
+    // A single default route reaches the Lambda, so the backend behind it owns its own routing rather
+    // than the gateway declaring one route per path.
     template.hasResourceProperties(
       "AWS::ApiGatewayV2::Route",
-      Match.objectLike({ RouteKey: "GET /health" }),
+      Match.objectLike({ RouteKey: "$default" }),
     );
   });
 
-  it("runs the handler on the Node 22 runtime with tracing on", () => {
+  it("runs the handler as a container image function with tracing on", () => {
     const template = templateFor("dev");
 
+    // A container image Lambda carries no Runtime or Handler: the image's own CMD is the handler. The
+    // proof it is an image function is PackageType Image and an ImageUri code reference.
     template.hasResourceProperties(
       "AWS::Lambda::Function",
       Match.objectLike({
-        Runtime: "nodejs22.x",
-        Handler: "index.handler",
+        PackageType: "Image",
+        Code: Match.objectLike({ ImageUri: Match.anyValue() }),
         TracingConfig: { Mode: "Active" },
       }),
     );
@@ -58,7 +63,9 @@ describe("ApiStack", () => {
     template.hasResourceProperties(
       "AWS::Lambda::Function",
       Match.objectLike({
-        Environment: Match.objectLike({ Variables: { STAGE: "uat", LOG_LEVEL: "DEBUG" } }),
+        Environment: Match.objectLike({
+          Variables: Match.objectLike({ STAGE: "uat", LOG_LEVEL: "DEBUG" }),
+        }),
       }),
     );
   });
