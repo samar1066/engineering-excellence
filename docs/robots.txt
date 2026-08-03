@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://samar1066.github.io/engineering-excellence/sitemap.xml
