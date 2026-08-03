@@ -20,6 +20,10 @@
         "items": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" }
       }
     },
+    "backends": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    },
     "pillars": {
       "type": "array",
       "items": { "type": "string", "pattern": "^EEP-" }

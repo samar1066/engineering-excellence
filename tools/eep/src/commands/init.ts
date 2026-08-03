@@ -40,6 +40,10 @@ export type InitOptions = {
   // Blueprint slices to include, meaningful only when a token names a blueprint. Each adds its
   // slice's packs to the composed set; a slice whose pack is not built yet is reported and skipped.
   withSlices?: string[];
+  // Which backend a blueprint composes, meaningful only when a token names a blueprint. Swaps the
+  // stack pack the blueprint lists as its default backend for the one this token maps to (see
+  // resolveBlueprintSelection). Undefined or empty keeps the blueprint's default backend.
+  backend?: string;
   // Omitted means "offer it". Only an explicit false (--no-install-offer) silences both the
   // prompt and the hint, which is what CI and scripted runs want.
   installOffer?: boolean;
@@ -481,6 +485,12 @@ function planComposedLayout(corpusDir: string, packs: string[]): Placement[] {
 
 function planLayout(opts: InitOptions, tokens: string[]): Plan {
   if (tokens.length === 0) {
+    // A single pack init names no blueprint, so a backend swap has nothing to apply to; refusing it
+    // here mirrors resolveBlueprintSelection's refusal of --backend when tokens name no blueprint,
+    // so `eep init myapp --backend node` fails the same way whether or not a framework token follows.
+    if ((opts.backend ?? "").trim() !== "") {
+      throw new Error("eep: --backend only applies to a blueprint token; none was given");
+    }
     return {
       mode: "single",
       scaffoldDir: findScaffoldDir(opts.corpusDir, opts.pack ?? DEFAULT_PACK),
@@ -489,9 +499,14 @@ function planLayout(opts: InitOptions, tokens: string[]): Plan {
 
   // A blueprint token expands into its pack set before framework resolution, so composed init sees
   // an ordinary list of packs. resolveBlueprintSelection refuses a blueprint mixed with any other
-  // token, and refuses --with when no blueprint was named, both before the project directory
-  // exists. When no token names a blueprint it returns the tokens untouched.
-  const selection = resolveBlueprintSelection(tokens, opts.withSlices ?? [], opts.corpusDir);
+  // token, and refuses --with or --backend when no blueprint was named, both before the project
+  // directory exists. When no token names a blueprint it returns the tokens untouched.
+  const selection = resolveBlueprintSelection(
+    tokens,
+    opts.withSlices ?? [],
+    opts.corpusDir,
+    opts.backend,
+  );
   const effectiveTokens = selection.blueprint === null ? tokens : selection.packs;
 
   const { packs, comingSoon, unknown } = resolveFrameworks(effectiveTokens, opts.corpusDir);
@@ -955,6 +970,7 @@ type InitCliOptions = {
   installOffer: boolean;
   tools?: string;
   with?: string;
+  backend?: string;
 };
 
 export function register(program: Command): void {
@@ -975,6 +991,7 @@ export function register(program: Command): void {
       "comma separated AI tools to generate for: claude, agents, copilot, cursor, none",
     )
     .option("--with <slices>", "comma separated blueprint slices to include (blueprint token only)")
+    .option("--backend <name>", "for a blueprint, which backend to compose, for example node")
     .action(async (name: string, tokens: string[], options: InitCliOptions) => {
       try {
         await runInit({
@@ -986,6 +1003,7 @@ export function register(program: Command): void {
           installOffer: options.installOffer,
           tools: toolsFromFlag(options.tools),
           withSlices: slicesFromFlag(options.with),
+          backend: options.backend,
         });
       } catch (error) {
         console.error(error instanceof Error ? error.message : String(error));

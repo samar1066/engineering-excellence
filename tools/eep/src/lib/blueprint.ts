@@ -20,6 +20,10 @@ export type Blueprint = {
   // Optional named pack sets, added with --with <name,...>. A slice may reference a pack the corpus
   // does not carry yet (a future wave), which is why expansion never checks pack existence.
   slices: Record<string, string[]>;
+  // Optional map of backend token to the stack pack that owns the API and domain component, selected
+  // with --backend <token>. Empty when the blueprint declares none. One of the values is the backend
+  // already named in core (the default); choosing another swaps it in place (see expandBlueprint).
+  backends: Record<string, string>;
   // Cross service law ids the blueprint asserts. Referenced only; the doctrine owns them.
   pillars: string[];
   // Reference integration prose between packs. Documentation only, drives no behavior.
@@ -60,6 +64,18 @@ function toSlices(value: unknown): Record<string, string[]> {
   return slices;
 }
 
+// A map of backend token to pack name, keeping only string valued entries. A malformed entry (a
+// number, a nested object) is dropped rather than coerced, so only real token to pack pairs reach the
+// swap. Absent or non object backends yields {}, which leaves core untouched when no --backend is asked.
+function toBackends(value: unknown): Record<string, string> {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return {};
+  const backends: Record<string, string> = {};
+  for (const [token, pack] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof pack === "string") backends[token] = pack;
+  }
+  return backends;
+}
+
 function toAuthors(value: unknown): { name: string; github: string }[] {
   if (!Array.isArray(value)) return [];
   const authors: { name: string; github: string }[] = [];
@@ -78,6 +94,7 @@ function toBlueprint(doc: Record<string, unknown>): Blueprint {
     description: typeof doc.description === "string" ? doc.description : "",
     core: toStringArray(doc.core),
     slices: toSlices(doc.slices),
+    backends: toBackends(doc.backends),
     pillars: toStringArray(doc.pillars),
     wiring: toStringArray(doc.wiring),
     authors: toAuthors(doc.authors),
@@ -150,22 +167,73 @@ export function loadBlueprint(name: string, corpusDir: string): Blueprint {
 }
 
 /**
+ * The core pack list with the chosen backend swapped in, or the core untouched when no backend was
+ * asked for.
+ *
+ * A blueprint's `backends` map names the swappable stack pack that owns the API and domain component,
+ * by token. One of its values is the backend already listed in core (the default). Selecting another
+ * with --backend replaces that one core pack in place, so every other core pack and their order are
+ * preserved, then deduplicates in case the chosen pack already appeared. The lookup is trimmed and
+ * case insensitive, so `--backend Node` and `--backend node ` both resolve. An unknown token throws,
+ * naming the tokens the blueprint does define; a blueprint whose core contains none of its own
+ * backend values has nothing to swap and throws too, rather than silently composing the default.
+ */
+function coreWithBackend(
+  name: string,
+  blueprint: Blueprint,
+  backend: string | undefined,
+): string[] {
+  const requested = (backend ?? "").trim();
+  if (requested === "") return [...blueprint.core];
+
+  const token = requested.toLowerCase();
+  const match = Object.entries(blueprint.backends).find(
+    ([key]) => key.trim().toLowerCase() === token,
+  );
+  if (match === undefined) {
+    const valid = Object.keys(blueprint.backends).join(", ") || "none";
+    throw new Error(
+      `eep: blueprint ${name} has no backend "${requested}"; valid backends: ${valid}`,
+    );
+  }
+  const chosen = match[1];
+
+  const backendPacks = new Set(Object.values(blueprint.backends));
+  const currentIdx = blueprint.core.findIndex((pack) => backendPacks.has(pack));
+  if (currentIdx === -1) {
+    throw new Error(
+      `eep: blueprint ${name} names backends but its core includes none of them to swap; core: ${blueprint.core.join(", ")}`,
+    );
+  }
+
+  const swapped = [...blueprint.core];
+  swapped[currentIdx] = chosen;
+  const deduped: string[] = [];
+  for (const pack of swapped) {
+    if (!deduped.includes(pack)) deduped.push(pack);
+  }
+  return deduped;
+}
+
+/**
  * Expands a blueprint into the pack set a composed init should build.
  *
- * The core packs come first, in declared order, then the packs for each requested slice, appended
- * in the order the slices were asked for and deduplicated. Pack existence is deliberately not
- * checked here: a wave 1 slice references a pack that is not built yet, and the command layer is
- * what partitions the result into existing and pending (see resolveBlueprintSelection). An unknown
- * slice name throws, naming the slices the blueprint does define, because a typo in --with should
- * fail loudly rather than silently compose the core alone.
+ * The core packs come first, in declared order (with the backend swapped when --backend named one,
+ * see coreWithBackend), then the packs for each requested slice, appended in the order the slices
+ * were asked for and deduplicated. Pack existence is deliberately not checked here: a wave 1 slice
+ * references a pack that is not built yet, and the command layer is what partitions the result into
+ * existing and pending (see resolveBlueprintSelection). An unknown slice name throws, naming the
+ * slices the blueprint does define, because a typo in --with should fail loudly rather than silently
+ * compose the core alone.
  */
 export function expandBlueprint(
   name: string,
   withSlices: string[],
   corpusDir: string,
+  backend?: string,
 ): { packs: string[] } {
   const blueprint = loadBlueprint(name, corpusDir);
-  const packs: string[] = [...blueprint.core];
+  const packs: string[] = coreWithBackend(name, blueprint, backend);
   const validSlices = Object.keys(blueprint.slices);
 
   for (const raw of withSlices) {
@@ -263,18 +331,20 @@ function normalizeToken(token: string): string {
 /**
  * Resolves a command's raw tokens against the blueprint vocabulary, before framework resolution.
  *
- * When no token names a blueprint, the caller proceeds unchanged (blueprint null); passing --with
- * in that case is an error, because slices only mean something for a blueprint. When a token does
- * name a blueprint, it must be the only token: a blueprint already names a complete pack set, so
- * mixing it with framework tokens (or a second blueprint) is refused, naming the offenders. The
- * blueprint is then expanded with the requested slices and the result split into the packs that
- * exist now (returned for composition) and the slice packs that are still on the roadmap (returned
- * as pending for the caller to report). Unknown slice names and unknown blueprints throw.
+ * When no token names a blueprint, the caller proceeds unchanged (blueprint null); passing --with or
+ * --backend in that case is an error, because slices and a backend swap only mean something for a
+ * blueprint. When a token does name a blueprint, it must be the only token: a blueprint already names
+ * a complete pack set, so mixing it with framework tokens (or a second blueprint) is refused, naming
+ * the offenders. The blueprint is then expanded with the requested slices and backend, and the result
+ * split into the packs that exist now (returned for composition) and the slice packs that are still on
+ * the roadmap (returned as pending for the caller to report). Unknown slice names, unknown backend
+ * tokens, and unknown blueprints throw.
  */
 export function resolveBlueprintSelection(
   tokens: string[],
   withSlices: string[],
   corpusDir: string,
+  backend?: string,
 ): BlueprintSelection {
   const blueprintNames = new Set(listBlueprints(corpusDir));
   const seen: string[] = [];
@@ -290,6 +360,9 @@ export function resolveBlueprintSelection(
         "eep: --with names blueprint slices and only applies to a blueprint token; none was given",
       );
     }
+    if ((backend ?? "").trim() !== "") {
+      throw new Error("eep: --backend only applies to a blueprint token; none was given");
+    }
     return { blueprint: null, packs: [], pendingSlicePacks: [] };
   }
 
@@ -301,7 +374,7 @@ export function resolveBlueprintSelection(
     );
   }
 
-  const { packs: expanded } = expandBlueprint(name, withSlices, corpusDir);
+  const { packs: expanded } = expandBlueprint(name, withSlices, corpusDir, backend);
   const installed = corpusPackNames(corpusDir);
   const packs = expanded.filter((pack) => installed.has(pack));
   const pendingSlicePacks = expanded.filter((pack) => !installed.has(pack));

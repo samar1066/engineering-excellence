@@ -32,6 +32,14 @@ slices:
   streaming: [aws-kinesis]
   sql: [aws-aurora]
 
+# backends name the swappable stack pack that owns the API and domain component. `--backend <token>`
+# swaps the default FastAPI backend named in core for the pack the token maps to, leaving every other
+# core pack in place. fastapi is the default already listed in core; node composes the TypeScript
+# backend instead. Requesting no `--backend` keeps core exactly as written.
+backends:
+  fastapi: python-fastapi
+  node: typescript-node
+
 # pillars are the cross service laws only a composition can assert. They stay vendor neutral in
 # doctrine so a second cloud blueprint reuses them; the AWS packs bind each one where they can.
 pillars:

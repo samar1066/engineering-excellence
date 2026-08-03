@@ -1,6 +1,6 @@
 .PHONY: setup test verify run
 setup:
-	npm ci
+	npm install
 test:
 	npm run test:cov
 verify:

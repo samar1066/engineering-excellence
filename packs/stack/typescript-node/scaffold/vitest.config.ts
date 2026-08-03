@@ -10,8 +10,13 @@ export default defineConfig({
     coverage: {
       provider: "v8",
       include: ["src/**/*.ts"],
-      // The process entry point binds a port and starts listening, which no test does.
-      exclude: ["src/main.ts"],
+      // The process entry point binds a port and starts listening, which no test does. A store
+      // repository adapter a data pack composes in (dynamo-*-repository.ts, and any other store added
+      // the same way) reaches an external data store and is proven by that pack's own contract suite
+      // against a local store in CI (EEP-ARCH-02), not by these fast unit tests, so it is excluded
+      // from the measurement, matching the python-fastapi backend's coverage omit. The in memory
+      // reference implementation stays measured.
+      exclude: ["src/main.ts", "src/infrastructure/dynamo-*-repository.ts"],
       reporter: ["text"],
       thresholds: { lines: 85 },
     },

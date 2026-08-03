@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Engineering Excellence Program — AWS full stack app blueprint for AI coding agents</title>
+<title>Engineering Excellence Program: AWS full stack app blueprint for AI coding agents</title>
 <meta name="description" content="Engineering Excellence Program (eep): build a complete Well-Architected AWS full stack app (React, FastAPI, DynamoDB, Cognito, S3, CloudFront, CDK) from one command, with machine enforced engineering doctrine and golden paths for AI coding agents." />
 <meta name="keywords" content="engineering excellence, engineering excellence program, eep, aws full stack, dynamodb, cognito, cloudfront, s3, aws cdk, serverless, api gateway, well architected, ai coding agents, claude code, github copilot, cursor, fastapi, react, typescript, scaffolding, code quality" />
 <meta name="author" content="Samar Swami" />
@@ -76,6 +76,7 @@
   <h2>One command, a whole AWS application</h2>
   <p>The Engineering Excellence Program (its command is <code>eep</code>) scaffolds a production shaped, deployable AWS full stack app, with every service kept as its own independently validated pack.</p>
   <pre><code>npx engineering-excellence init myapp aws-fullstack</code></pre>
+  <p style="text-align:center;color:var(--muted);margin-top:.6rem">Prefer Node.js? Add <code>--backend node</code> for a TypeScript backend instead of FastAPI.</p>
   <div class="grid">
     <div class="card"><h3>React on CloudFront</h3><p>A Vite built React frontend served from a private S3 bucket through a CloudFront CDN over HTTPS.</p></div>
     <div class="card"><h3>DynamoDB + Cognito API</h3><p>A five layer FastAPI service with DynamoDB persistence behind its repository interface and Cognito JSON Web Token authentication guarding the routes.</p></div>

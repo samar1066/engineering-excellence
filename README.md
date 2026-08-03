@@ -174,12 +174,19 @@ What lands in `myapp/`:
    generated instructions adds a persisted, authenticated feature and the gate
    stays green.
 
-Today the blueprint composes the FastAPI and AWS Fargate stack above. A Node.js
-and TypeScript backend, an API Gateway serverless compute path, and optional
-capability slices (asynchronous messaging, search, caching, streaming, and SQL,
-added with `--with`) are the next variants on the way, each shipping as its own
-validated pack. The laws underneath every pack stay cloud neutral, so an Azure
-or Google Cloud blueprint reuses them.
+The backend is FastAPI by default. Prefer Node.js? Add `--backend node` for a
+TypeScript and Node.js backend instead, wired to the same DynamoDB and Cognito
+services and held to the same gate:
+
+```bash
+npx engineering-excellence init myapp aws-fullstack --backend node
+```
+
+An API Gateway serverless compute path and optional capability slices
+(asynchronous messaging, search, caching, streaming, and SQL, added with
+`--with`) are the next variants on the way, each shipping as its own validated
+pack. The laws underneath every pack stay cloud neutral, so an Azure or Google
+Cloud blueprint reuses them.
 
 ## Agents and tools it works with
 
@@ -218,7 +225,7 @@ the rules travel with the repository whether or not eep is ever run again.
 
 | Category | Framework or platform | Token | Status |
 |---|---|---|---|
-| **Blueprints** | AWS full stack app: React, FastAPI, DynamoDB, Cognito, S3, and CloudFront, composed and wired on AWS CDK | `aws-fullstack` | Available |
+| **Blueprints** | AWS full stack app: React, a FastAPI or Node backend, DynamoDB, Cognito, S3, and CloudFront, composed and wired on AWS CDK | `aws-fullstack` | Available |
 | **Backend** | C++ | `cpp` | In development |
 | | FastAPI (Python) | `fastapi` | Available |
 | | Go | `go` | In development |

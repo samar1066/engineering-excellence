@@ -164,6 +164,51 @@ describe("expandBlueprint", () => {
   });
 });
 
+// The core with python-fastapi swapped for the node backend: every other core pack, and their order,
+// is left exactly as the fastapi core has them.
+const NODE_CORE = [
+  "react",
+  "typescript-node",
+  "aws-dynamodb",
+  "aws-cognito",
+  "aws-s3",
+  "aws-cdk",
+  "containers-k8s",
+  "github-actions",
+];
+
+describe("expandBlueprint with a backend", () => {
+  it("swaps python-fastapi for the node backend, leaving every other core pack in place", () => {
+    expect(expandBlueprint("aws-fullstack", [], corpusDir, "node").packs).toEqual(NODE_CORE);
+  });
+
+  it("leaves python-fastapi in place when no backend is asked for", () => {
+    expect(expandBlueprint("aws-fullstack", [], corpusDir).packs).toEqual(CORE);
+    expect(expandBlueprint("aws-fullstack", [], corpusDir, "").packs).toEqual(CORE);
+  });
+
+  it("keeps the default fastapi backend when its own token is named", () => {
+    expect(expandBlueprint("aws-fullstack", [], corpusDir, "fastapi").packs).toEqual(CORE);
+  });
+
+  it("resolves the backend token trimmed and case insensitively", () => {
+    expect(expandBlueprint("aws-fullstack", [], corpusDir, " Node ").packs).toEqual(NODE_CORE);
+  });
+
+  it("appends requested slices after the swapped core", () => {
+    expect(expandBlueprint("aws-fullstack", ["async"], corpusDir, "node").packs).toEqual([
+      ...NODE_CORE,
+      "aws-messaging",
+    ]);
+  });
+
+  it("throws on an unknown backend token, naming the valid ones", () => {
+    expect(() => expandBlueprint("aws-fullstack", [], corpusDir, "rust")).toThrow(
+      /has no backend "rust"; valid backends: fastapi, node/,
+    );
+  });
+});
+
 describe("resolveBlueprintSelection", () => {
   it("expands a lone blueprint token into its existing core packs", () => {
     expect(resolveBlueprintSelection(["aws-fullstack"], [], corpusDir)).toEqual({
@@ -195,6 +240,20 @@ describe("resolveBlueprintSelection", () => {
 
   it("refuses --with when no blueprint was named", () => {
     expect(() => resolveBlueprintSelection(["fastapi"], ["async"], corpusDir)).toThrow(/--with/);
+  });
+
+  it("threads a backend through, swapping the composed pack set to the node backend", () => {
+    expect(resolveBlueprintSelection(["aws-fullstack"], [], corpusDir, "node")).toEqual({
+      blueprint: "aws-fullstack",
+      packs: NODE_CORE,
+      pendingSlicePacks: [],
+    });
+  });
+
+  it("refuses --backend when no blueprint was named", () => {
+    expect(() => resolveBlueprintSelection(["fastapi"], [], corpusDir, "node")).toThrow(
+      /--backend only applies to a blueprint token; none was given/,
+    );
   });
 });
 

@@ -25,6 +25,19 @@ const CORE = [
 ];
 const COMPONENT_DIRS = ["auth", "backend", "data", "frontend", "infra", "storage"];
 
+// The same core with --backend node: python-fastapi is gone and typescript-node takes its place, so
+// the sorted lock names the node backend where it named the python one. Every other pack is unchanged.
+const NODE_CORE = [
+  "aws-cdk",
+  "aws-cognito",
+  "aws-dynamodb",
+  "aws-s3",
+  "containers-k8s",
+  "github-actions",
+  "react",
+  "typescript-node",
+];
+
 const COMPOSE_TIMEOUT = 120_000;
 
 function newTargetDir(prefix: string): string {
@@ -196,6 +209,55 @@ describe("init with a blueprint token", () => {
 
         // The whole point of running the pass before the scaffold commit: the swap is committed, not
         // left as an untracked edit beside a governed repository.
+        const status = await execa("git", ["status", "--porcelain"], { cwd: projectDir });
+        expect(status.stdout.trim()).toBe("");
+      } finally {
+        rmSync(targetDir, { recursive: true, force: true });
+      }
+    },
+    COMPOSE_TIMEOUT,
+  );
+
+  it(
+    "composes the node backend, guarding its routes and shipping the Cognito guard test into the service",
+    async () => {
+      const targetDir = newTargetDir("eep-blueprint-node-");
+      try {
+        await runInit({
+          name: "shop",
+          targetDir,
+          corpusDir,
+          tokens: ["aws-fullstack"],
+          backend: "node",
+          installOffer: false,
+        });
+
+        const projectDir = join(targetDir, "shop");
+
+        // The lock records the node backend in place of python-fastapi; every other core pack is the
+        // same, which is the whole contract of --backend.
+        expect(lockPackNames(projectDir)).toEqual(NODE_CORE);
+
+        // typescript-node claims the service component; the python backend is not composed at all.
+        expect(existsSync(join(projectDir, "service", "package.json"))).toBe(true);
+        expect(existsSync(join(projectDir, "backend"))).toBe(false);
+
+        // The Cognito guard module and, the deferred fix, its guard test both land in the service, so
+        // the backend covers the guard it runs. The test sits beside src/ so its relative import of
+        // the guard (../src/auth.js) resolves to the auth.ts copied into src/.
+        expect(existsSync(join(projectDir, "service", "src", "auth.ts"))).toBe(true);
+        expect(existsSync(join(projectDir, "service", "test", "auth.test.ts"))).toBe(true);
+
+        // The composition root guards the notes routes behind the auth preHandler and runs on the
+        // DynamoDB repository behind the unchanged interface: both the auth and data wiring applied to
+        // the one src/app.ts the node backend has.
+        const app = readFileSync(join(projectDir, "service", "src", "app.ts"), "utf8");
+        expect(app).toContain('import { requireUser } from "./auth.js";');
+        expect(app).toContain('scope.addHook("preHandler", authGuard);');
+        expect(app).toContain("new DynamoNoteRepository()");
+        expect(app).not.toContain("new MemoryNoteRepository()");
+
+        // The wired swap is committed with the scaffold rather than left as an untracked edit.
         const status = await execa("git", ["status", "--porcelain"], { cwd: projectDir });
         expect(status.stdout.trim()).toBe("");
       } finally {

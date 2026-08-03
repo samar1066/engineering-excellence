@@ -107,6 +107,14 @@ wiring:
       copy:
         - from: scaffold/wiring/typescript/src/auth.ts
           to: src/auth.ts
+        # The guard's own test ships beside the backend's other suites so the composed backend covers
+        # the guard it runs. It lands at test/auth.test.ts, a sibling of src/, so the test's relative
+        # import of the guard (../src/auth.js) resolves to the src/auth.ts copied just above, and
+        # vitest's test/**/*.test.ts discovery picks it up. It proves only the reject path, which needs
+        # no Cognito; the accept path is delegated to aws-jwt-verify and proven by the Python guard's
+        # unit test against a mocked JWKS.
+        - from: scaffold/wiring/typescript/test/auth.test.ts
+          to: test/auth.test.ts
       patch:
         - file: src/app.ts
           replace:
