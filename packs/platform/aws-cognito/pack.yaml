@@ -152,5 +152,25 @@ wiring:
               to: "    const auth = new UserPool(this, \"Auth\", {\n      owner: \"{{project_name}}\",\n      environment: config.stage,\n    });\n\n    this.service = new ecsPatterns.ApplicationLoadBalancedFargateService(this, \"Service\", {"
             - from: '          IMAGE_TAG: imageTag,'
               to: "          IMAGE_TAG: imageTag,\n          COGNITO_USER_POOL_ID: auth.pool.userPoolId,\n          COGNITO_CLIENT_ID: auth.client.userPoolClientId,\n          AWS_REGION: this.region,"
+    # The serverless compute variant: the same user pool construct composes into the API Gateway plus
+    # Lambda stack instead of the Fargate one. The construct file is identical; only the anchors differ,
+    # targeting api-stack.ts, its ESM `.js` imports, and the Lambda's environment. AWS_REGION is not
+    # injected here, unlike the Fargate recipe: the Lambda runtime provides AWS_REGION as a reserved
+    # variable, so setting it is refused, and the guard reads the region the runtime already supplies.
+    # There is no grant: the guard authenticates a bearer token against the pool's JWKS over HTTPS and
+    # needs no IAM permission on the pool, exactly as in the Fargate recipe.
+    aws-serverless:
+      copy:
+        - from: scaffold/construct/user-pool.ts
+          to: lib/user-pool.ts
+      patch:
+        - file: lib/api-stack.ts
+          replace:
+            - from: 'import type { Environment } from "./environments.js";'
+              to: "import type { Environment } from \"./environments.js\";\nimport { UserPool } from \"./user-pool.js\";"
+            - from: '    this.handler = new DockerImageFunction(this, "ApiFunction", {'
+              to: "    const auth = new UserPool(this, \"Auth\", {\n      owner: \"{{project_name}}\",\n      environment: environment.stage,\n    });\n\n    this.handler = new DockerImageFunction(this, \"ApiFunction\", {"
+            - from: '        IMAGE_TAG: imageTag,'
+              to: "        IMAGE_TAG: imageTag,\n        COGNITO_USER_POOL_ID: auth.pool.userPoolId,\n        COGNITO_CLIENT_ID: auth.client.userPoolClientId,"
 authors: [{ name: Samar Swami, github: "@samar1066" }]
 maintainers: ["@samar1066"]

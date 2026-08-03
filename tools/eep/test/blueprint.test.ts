@@ -88,6 +88,8 @@ describe("loadBlueprint", () => {
     expect(blueprint.core).toEqual(CORE);
     expect(Object.keys(blueprint.slices)).toEqual(["async", "search", "cache", "streaming", "sql"]);
     expect(blueprint.slices.async).toEqual(["aws-messaging"]);
+    expect(blueprint.backends).toEqual({ fastapi: "python-fastapi", node: "typescript-node" });
+    expect(blueprint.compute).toEqual({ fargate: "aws-cdk", serverless: "aws-serverless" });
     expect(blueprint.pillars).toEqual(PILLARS);
     expect(blueprint.wiring).toHaveLength(3);
     expect(blueprint.maintainers).toContain("@samar1066");
@@ -209,6 +211,58 @@ describe("expandBlueprint with a backend", () => {
   });
 });
 
+// The core with the Fargate compute swapped for the serverless one: aws-cdk becomes aws-serverless,
+// and every other core pack, and their order, is left exactly as the default core has them.
+const SERVERLESS_CORE = [
+  "react",
+  "python-fastapi",
+  "aws-dynamodb",
+  "aws-cognito",
+  "aws-s3",
+  "aws-serverless",
+  "containers-k8s",
+  "github-actions",
+];
+
+// The node backend and the serverless compute swapped together: two different core members change,
+// and neither swap undoes the other.
+const NODE_SERVERLESS_CORE = [
+  "react",
+  "typescript-node",
+  "aws-dynamodb",
+  "aws-cognito",
+  "aws-s3",
+  "aws-serverless",
+  "containers-k8s",
+  "github-actions",
+];
+
+describe("expandBlueprint with serverless compute", () => {
+  it("swaps aws-cdk for aws-serverless, leaving every other core pack in place", () => {
+    expect(expandBlueprint("aws-fullstack", [], corpusDir, undefined, true).packs).toEqual(
+      SERVERLESS_CORE,
+    );
+  });
+
+  it("keeps the default Fargate compute when serverless is not asked for", () => {
+    expect(expandBlueprint("aws-fullstack", [], corpusDir, undefined, false).packs).toEqual(CORE);
+    expect(expandBlueprint("aws-fullstack", [], corpusDir).packs).toEqual(CORE);
+  });
+
+  it("composes with a backend swap, changing both core members", () => {
+    expect(expandBlueprint("aws-fullstack", [], corpusDir, "node", true).packs).toEqual(
+      NODE_SERVERLESS_CORE,
+    );
+  });
+
+  it("appends requested slices after the serverless swapped core", () => {
+    expect(expandBlueprint("aws-fullstack", ["async"], corpusDir, undefined, true).packs).toEqual([
+      ...SERVERLESS_CORE,
+      "aws-messaging",
+    ]);
+  });
+});
+
 describe("resolveBlueprintSelection", () => {
   it("expands a lone blueprint token into its existing core packs", () => {
     expect(resolveBlueprintSelection(["aws-fullstack"], [], corpusDir)).toEqual({
@@ -253,6 +307,20 @@ describe("resolveBlueprintSelection", () => {
   it("refuses --backend when no blueprint was named", () => {
     expect(() => resolveBlueprintSelection(["fastapi"], [], corpusDir, "node")).toThrow(
       /--backend only applies to a blueprint token; none was given/,
+    );
+  });
+
+  it("threads serverless through, swapping the composed pack set to the serverless compute", () => {
+    expect(resolveBlueprintSelection(["aws-fullstack"], [], corpusDir, undefined, true)).toEqual({
+      blueprint: "aws-fullstack",
+      packs: SERVERLESS_CORE,
+      pendingSlicePacks: [],
+    });
+  });
+
+  it("refuses --serverless when no blueprint was named", () => {
+    expect(() => resolveBlueprintSelection(["fastapi"], [], corpusDir, undefined, true)).toThrow(
+      /--serverless only applies to a blueprint token; none was given/,
     );
   });
 });

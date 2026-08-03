@@ -23,9 +23,11 @@ values the definition refuses to hold: `bin/app.ts` reads whatever the CDK CLI
 resolved into `CDK_DEFAULT_ACCOUNT` and `CDK_DEFAULT_REGION` from the
 credentials the command runs under, which keeps account ids out of version
 control and makes synthesis work on a machine with no credentials at all. The
-scaffold's handler is inline for the same reason: with no bundler, no Docker
+function's code is a container image referenced by ECR repository and tag rather
+than a CDK asset built at synth, for the same reason: with no bundler, no Docker
 daemon, and no network in the path, evaluating the definition produces the same
-templates from a clean checkout on any machine.
+templates from a clean checkout on any machine, while the image itself is built
+once and promoted by tag through the stages.
 
 ## The check
 

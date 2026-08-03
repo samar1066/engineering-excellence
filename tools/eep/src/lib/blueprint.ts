@@ -24,6 +24,11 @@ export type Blueprint = {
   // with --backend <token>. Empty when the blueprint declares none. One of the values is the backend
   // already named in core (the default); choosing another swaps it in place (see expandBlueprint).
   backends: Record<string, string>;
+  // Optional map of compute token to the platform pack that owns how the app runs, selected with
+  // --serverless. Empty when the blueprint declares none. One of the values is the compute pack
+  // already named in core (the default, fargate); --serverless swaps it for the serverless one in
+  // place, the same way --backend swaps the backend (see expandBlueprint and coreWithCompute).
+  compute: Record<string, string>;
   // Cross service law ids the blueprint asserts. Referenced only; the doctrine owns them.
   pillars: string[];
   // Reference integration prose between packs. Documentation only, drives no behavior.
@@ -76,6 +81,19 @@ function toBackends(value: unknown): Record<string, string> {
   return backends;
 }
 
+// A map of compute token to pack name, parsed exactly like toBackends: only string valued entries are
+// kept, a malformed entry is dropped rather than coerced, and an absent or non object compute yields
+// {}, which leaves core untouched when no --serverless is asked. The two are separate axes of the core
+// (which backend owns the API, which platform runs it), so they are parsed and swapped independently.
+function toCompute(value: unknown): Record<string, string> {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return {};
+  const compute: Record<string, string> = {};
+  for (const [token, pack] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof pack === "string") compute[token] = pack;
+  }
+  return compute;
+}
+
 function toAuthors(value: unknown): { name: string; github: string }[] {
   if (!Array.isArray(value)) return [];
   const authors: { name: string; github: string }[] = [];
@@ -95,6 +113,7 @@ function toBlueprint(doc: Record<string, unknown>): Blueprint {
     core: toStringArray(doc.core),
     slices: toSlices(doc.slices),
     backends: toBackends(doc.backends),
+    compute: toCompute(doc.compute),
     pillars: toStringArray(doc.pillars),
     wiring: toStringArray(doc.wiring),
     authors: toAuthors(doc.authors),
@@ -216,6 +235,52 @@ function coreWithBackend(
 }
 
 /**
+ * The (already backend swapped) core with the serverless compute pack in place of the default one, or
+ * the core untouched when --serverless was not asked for.
+ *
+ * This is coreWithBackend on the other axis: a blueprint's `compute` map names the swappable platform
+ * pack that runs the app, by token. One of its values is the compute pack already listed in core (the
+ * default, fargate -> aws-cdk). --serverless replaces that one core pack in place with the serverless
+ * value, so every other core pack and their order are preserved, then deduplicates. Because it takes
+ * the core coreWithBackend already produced rather than blueprint.core, --backend and --serverless
+ * compose: the backend swap and the compute swap land on two different core members and neither undoes
+ * the other. A blueprint that declares no serverless compute, or whose core carries none of its own
+ * compute packs to swap, throws rather than silently composing the default.
+ */
+function coreWithCompute(
+  name: string,
+  blueprint: Blueprint,
+  core: string[],
+  serverless: boolean,
+): string[] {
+  if (!serverless) return [...core];
+
+  const chosen = blueprint.compute.serverless;
+  if (chosen === undefined) {
+    const valid = Object.keys(blueprint.compute).join(", ") || "none";
+    throw new Error(
+      `eep: blueprint ${name} has no serverless compute to swap in; declared compute: ${valid}`,
+    );
+  }
+
+  const computePacks = new Set(Object.values(blueprint.compute));
+  const currentIdx = core.findIndex((pack) => computePacks.has(pack));
+  if (currentIdx === -1) {
+    throw new Error(
+      `eep: blueprint ${name} names compute variants but its core includes none of them to swap; core: ${core.join(", ")}`,
+    );
+  }
+
+  const swapped = [...core];
+  swapped[currentIdx] = chosen;
+  const deduped: string[] = [];
+  for (const pack of swapped) {
+    if (!deduped.includes(pack)) deduped.push(pack);
+  }
+  return deduped;
+}
+
+/**
  * Expands a blueprint into the pack set a composed init should build.
  *
  * The core packs come first, in declared order (with the backend swapped when --backend named one,
@@ -225,15 +290,21 @@ function coreWithBackend(
  * existing and pending (see resolveBlueprintSelection). An unknown slice name throws, naming the
  * slices the blueprint does define, because a typo in --with should fail loudly rather than silently
  * compose the core alone.
+ *
+ * The backend swap (--backend) and the compute swap (--serverless) are applied in that order to the
+ * core, before any slice is appended: they land on two different core members, so requesting both
+ * swaps both, and requesting neither leaves the core exactly as written.
  */
 export function expandBlueprint(
   name: string,
   withSlices: string[],
   corpusDir: string,
   backend?: string,
+  serverless?: boolean,
 ): { packs: string[] } {
   const blueprint = loadBlueprint(name, corpusDir);
-  const packs: string[] = coreWithBackend(name, blueprint, backend);
+  const withBackend = coreWithBackend(name, blueprint, backend);
+  const packs: string[] = coreWithCompute(name, blueprint, withBackend, serverless === true);
   const validSlices = Object.keys(blueprint.slices);
 
   for (const raw of withSlices) {
@@ -331,20 +402,21 @@ function normalizeToken(token: string): string {
 /**
  * Resolves a command's raw tokens against the blueprint vocabulary, before framework resolution.
  *
- * When no token names a blueprint, the caller proceeds unchanged (blueprint null); passing --with or
- * --backend in that case is an error, because slices and a backend swap only mean something for a
- * blueprint. When a token does name a blueprint, it must be the only token: a blueprint already names
- * a complete pack set, so mixing it with framework tokens (or a second blueprint) is refused, naming
- * the offenders. The blueprint is then expanded with the requested slices and backend, and the result
- * split into the packs that exist now (returned for composition) and the slice packs that are still on
- * the roadmap (returned as pending for the caller to report). Unknown slice names, unknown backend
- * tokens, and unknown blueprints throw.
+ * When no token names a blueprint, the caller proceeds unchanged (blueprint null); passing --with,
+ * --backend, or --serverless in that case is an error, because slices, a backend swap, and a compute
+ * swap only mean something for a blueprint. When a token does name a blueprint, it must be the only
+ * token: a blueprint already names a complete pack set, so mixing it with framework tokens (or a
+ * second blueprint) is refused, naming the offenders. The blueprint is then expanded with the
+ * requested slices, backend, and compute, and the result split into the packs that exist now
+ * (returned for composition) and the slice packs that are still on the roadmap (returned as pending
+ * for the caller to report). Unknown slice names, unknown backend tokens, and unknown blueprints throw.
  */
 export function resolveBlueprintSelection(
   tokens: string[],
   withSlices: string[],
   corpusDir: string,
   backend?: string,
+  serverless?: boolean,
 ): BlueprintSelection {
   const blueprintNames = new Set(listBlueprints(corpusDir));
   const seen: string[] = [];
@@ -363,6 +435,9 @@ export function resolveBlueprintSelection(
     if ((backend ?? "").trim() !== "") {
       throw new Error("eep: --backend only applies to a blueprint token; none was given");
     }
+    if (serverless === true) {
+      throw new Error("eep: --serverless only applies to a blueprint token; none was given");
+    }
     return { blueprint: null, packs: [], pendingSlicePacks: [] };
   }
 
@@ -374,7 +449,7 @@ export function resolveBlueprintSelection(
     );
   }
 
-  const { packs: expanded } = expandBlueprint(name, withSlices, corpusDir, backend);
+  const { packs: expanded } = expandBlueprint(name, withSlices, corpusDir, backend, serverless);
   const installed = corpusPackNames(corpusDir);
   const packs = expanded.filter((pack) => installed.has(pack));
   const pendingSlicePacks = expanded.filter((pack) => !installed.has(pack));

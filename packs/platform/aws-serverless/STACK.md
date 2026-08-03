@@ -48,44 +48,22 @@ One template, many instantiations. `lib/api-stack.ts` describes the shape of eve
 
 Accounts bind at deploy time. `bin/app.ts` passes `CDK_DEFAULT_ACCOUNT` and `CDK_DEFAULT_REGION`, which the CDK CLI fills from whatever credentials the command runs under. No account id ever enters version control, and `npm run synth` works on a machine with no credentials at all, which is exactly what the verification gate needs.
 
-## The handler, and the Powertools upgrade
+## The handler is the backend's container image
 
-The scaffold's health handler is inline in `lib/api-stack.ts` through `Code.fromInline`, on purpose: inline code carries no bundler, no Docker daemon, and no network into `npm run synth`, so the EEP-IAC-01 check runs from a clean checkout anywhere. It logs one JSON object per line, carrying the stage and the API Gateway request id as the correlation identifier, because a log line CloudWatch Logs Insights can parse into fields is worth more than a prose line the moment an incident starts.
+The function runs a container image, not a bundle of handler code that lives in this component. `lib/api-stack.ts` references the image by ECR repository and tag through `IMAGE_REPOSITORY`, `IMAGE_TAG_CONTEXT_KEY`, and `UNDEPLOYABLE_IMAGE_TAG`, exactly the way the Fargate `service-stack.ts` references its image by registry and tag. The image's own CMD is the handler, so the backend the stack pack scaffolds runs here unchanged: there is no separate handler file in this component, no ASGI adapter to wire into the stack, and no second copy of the application to keep in step.
 
-Inline code stops being the right answer as soon as a handler needs a dependency, which is the first real endpoint. At that point move to a bundled handler and AWS Lambda Powertools for TypeScript in one step:
+Referencing the image rather than building it as a CDK asset is deliberate, and it is what keeps the gate honest: with no bundler, no Docker daemon, and no network in the synth path, `npm run synth` renders the same templates from a clean checkout on any machine, and one image built once is promoted by tag through dev, uat, and prod. When no `imageTag` context is supplied the stack falls back to `UNDEPLOYABLE_IMAGE_TAG`, a tag no build ever pushes, which makes a template synthesized without one impossible to deploy into a running function by accident. The gate's `npm run synth` passes a harmless placeholder, `--context imageTag=ci-validation`, exactly as the Fargate sibling does, and a real deploy names the built artifact: `npx cdk deploy --all -c stage=dev --context imageTag=<sha>`.
 
-1. Install the runtime libraries: `@aws-lambda-powertools/logger`, `@aws-lambda-powertools/tracer`, and `@aws-lambda-powertools/metrics`, plus `esbuild` as a devDependency. Without esbuild installed locally, `NodejsFunction` bundles inside Docker and `npm run synth` starts needing a running daemon.
-2. Move the handler into `src/handlers/<name>.ts` as real TypeScript.
-3. Swap the construct: replace `new Function(...)` with `new NodejsFunction(this, "HealthFunction", { entry: "src/handlers/health.ts", runtime: Runtime.NODEJS_22_X, ... })` from `aws-cdk-lib/aws-lambda-nodejs`. The commented block in `lib/api-stack.ts` is the exact replacement, keeping `memorySize`, `timeout`, `logGroup`, and `tracing` unchanged.
-4. Add the Powertools environment variables next to `STAGE`: `POWERTOOLS_SERVICE_NAME` names the service in every log line and trace segment, `POWERTOOLS_METRICS_NAMESPACE` groups the metrics, and `LOG_LEVEL` is already there.
+Every route reaches this one function. The HTTP API is created with a `defaultIntegration`, which renders a single `$default` route, so the application behind the gateway owns its own routing and a new endpoint is a change to the backend rather than a new route in this stack.
 
-The handler then reads like this, and this is the shape to copy:
+One thing the image owes that a plain server image does not. A Lambda container image must speak the Lambda Runtime API, while the backend's Dockerfile from the containers-k8s pack runs uvicorn as a long lived server on a port. Making the same image serve both is a change to the image build, owned by the container pack and the delivery pipeline rather than by this stack, and there are two clean shapes for it:
 
-```ts
-import { Logger } from "@aws-lambda-powertools/logger";
-import { Metrics, MetricUnit } from "@aws-lambda-powertools/metrics";
-import { Tracer } from "@aws-lambda-powertools/tracer";
+1. Put the AWS Lambda Web Adapter in front of the existing server. The image keeps its uvicorn CMD and exposes its port, and the adapter, added as a layer or copied in as an extension, translates each Lambda invocation into an HTTP request to it. The application code does not change at all.
+2. Build a Lambda flavored image from an AWS base image for Python and set its CMD to an ASGI handler such as Mangum wrapping `app.main:app`. This is a second, small Dockerfile beside the server one rather than an edit to the application.
 
-const logger = new Logger();
-const tracer = new Tracer();
-const metrics = new Metrics();
+Either way the choice lives in the image, so this stack is unaffected: it references whatever image the pipeline publishes under the repository and tag, and its template is identical regardless of which shape the image takes.
 
-export const handler = async (event: APIGatewayProxyEventV2, context: Context) => {
-  logger.addContext(context); // stamps request id, cold start, and function name on every line
-  metrics.captureColdStartMetric();
-  const subsegment = tracer.getSegment()?.addNewSubsegment("work");
-  try {
-    logger.info("health checked", { stage: process.env.STAGE });
-    metrics.addMetric("HealthChecked", MetricUnit.Count, 1);
-    return { statusCode: 200, body: JSON.stringify({ status: "ok" }) };
-  } finally {
-    subsegment?.close();
-    metrics.publishStoredMetrics();
-  }
-};
-```
-
-Three notes on it. The logger is structured JSON by default and `addContext` binds the Lambda request id, so a correlation identifier reaches every line without being passed around. The tracer builds on the X-Ray segment the function already creates, because `tracing: Tracing.ACTIVE` is set in the scaffold: the upgrade adds detail inside a trace that already exists rather than turning tracing on for the first time during an incident. Metrics are written as embedded metric format lines, so a metric costs a log line rather than an API call on the request path.
+Logging and tracing follow the same seam. The function turns on X-Ray active tracing and provisions its log group and retention here, but the shape of a log line and the propagation of a span live inside the container image, which is the backend component's concern. The structured logging and trace context the backend already configures reach CloudWatch and X-Ray through the log group and the active tracing this stack sets up, with nothing to add in TypeScript.
 
 ## Toolchain
 

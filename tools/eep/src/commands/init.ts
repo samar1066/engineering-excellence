@@ -44,6 +44,11 @@ export type InitOptions = {
   // stack pack the blueprint lists as its default backend for the one this token maps to (see
   // resolveBlueprintSelection). Undefined or empty keeps the blueprint's default backend.
   backend?: string;
+  // Whether a blueprint composes onto its serverless compute, meaningful only when a token names a
+  // blueprint. When true, swaps the platform pack the blueprint lists as its default (Fargate) compute
+  // for the serverless one, so the same full app composes onto AWS Lambda behind API Gateway (see
+  // resolveBlueprintSelection). Undefined or false keeps the blueprint's default Fargate compute.
+  serverless?: boolean;
   // Omitted means "offer it". Only an explicit false (--no-install-offer) silences both the
   // prompt and the hint, which is what CI and scripted runs want.
   installOffer?: boolean;
@@ -485,11 +490,15 @@ function planComposedLayout(corpusDir: string, packs: string[]): Placement[] {
 
 function planLayout(opts: InitOptions, tokens: string[]): Plan {
   if (tokens.length === 0) {
-    // A single pack init names no blueprint, so a backend swap has nothing to apply to; refusing it
-    // here mirrors resolveBlueprintSelection's refusal of --backend when tokens name no blueprint,
-    // so `eep init myapp --backend node` fails the same way whether or not a framework token follows.
+    // A single pack init names no blueprint, so a backend or compute swap has nothing to apply to;
+    // refusing them here mirrors resolveBlueprintSelection's refusal of --backend and --serverless
+    // when tokens name no blueprint, so `eep init myapp --backend node` and `eep init myapp
+    // --serverless` fail the same way whether or not a framework token follows.
     if ((opts.backend ?? "").trim() !== "") {
       throw new Error("eep: --backend only applies to a blueprint token; none was given");
+    }
+    if (opts.serverless === true) {
+      throw new Error("eep: --serverless only applies to a blueprint token; none was given");
     }
     return {
       mode: "single",
@@ -506,6 +515,7 @@ function planLayout(opts: InitOptions, tokens: string[]): Plan {
     opts.withSlices ?? [],
     opts.corpusDir,
     opts.backend,
+    opts.serverless,
   );
   const effectiveTokens = selection.blueprint === null ? tokens : selection.packs;
 
@@ -971,6 +981,7 @@ type InitCliOptions = {
   tools?: string;
   with?: string;
   backend?: string;
+  serverless?: boolean;
 };
 
 export function register(program: Command): void {
@@ -992,6 +1003,10 @@ export function register(program: Command): void {
     )
     .option("--with <slices>", "comma separated blueprint slices to include (blueprint token only)")
     .option("--backend <name>", "for a blueprint, which backend to compose, for example node")
+    .option(
+      "--serverless",
+      "for a blueprint, compose onto AWS Lambda and API Gateway instead of Fargate",
+    )
     .action(async (name: string, tokens: string[], options: InitCliOptions) => {
       try {
         await runInit({
@@ -1004,6 +1019,7 @@ export function register(program: Command): void {
           tools: toolsFromFlag(options.tools),
           withSlices: slicesFromFlag(options.with),
           backend: options.backend,
+          serverless: options.serverless,
         });
       } catch (error) {
         console.error(error instanceof Error ? error.message : String(error));
