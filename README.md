@@ -16,8 +16,15 @@ It works on a repository created five minutes ago and one running in production
 for a decade, and it works whether your team uses Claude, Copilot, Cursor,
 another agent, or none at all.
 
+It also stands up complete cloud applications from one blueprint. A single
+command scaffolds a production shaped, Well-Architected AWS full stack
+application: a React frontend served through CloudFront, an API with DynamoDB
+persistence and Cognito authentication, S3 object storage, and an AWS CDK deploy
+pipeline, with every AWS service kept as its own independently validated pack.
+
 ```bash
-npx engineering-excellence fastapi
+npx engineering-excellence fastapi                     # add the doctrine to any repository
+npx engineering-excellence init myapp aws-fullstack    # a whole AWS app, ready to deploy
 ```
 
 ## Contents
@@ -25,13 +32,14 @@ npx engineering-excellence fastapi
 1. [Install](#install)
 2. [Bring it to an existing repository](#bring-it-to-an-existing-repository)
 3. [Start something new](#start-something-new)
-4. [Agents and tools it works with](#agents-and-tools-it-works-with)
-5. [What we support](#what-we-support)
-6. [How the support works](#how-the-support-works)
-7. [Why this stays reliable as it grows](#why-this-stays-reliable-as-it-grows)
-8. [Command reference](#command-reference)
-9. [Contributing](#contributing)
-10. [License](#license)
+4. [Build a complete AWS application](#build-a-complete-aws-application)
+5. [Agents and tools it works with](#agents-and-tools-it-works-with)
+6. [What we support](#what-we-support)
+7. [How the support works](#how-the-support-works)
+8. [Why this stays reliable as it grows](#why-this-stays-reliable-as-it-grows)
+9. [Command reference](#command-reference)
+10. [Contributing](#contributing)
+11. [License](#license)
 
 ## Install
 
@@ -137,6 +145,42 @@ Naming no framework (`npx engineering-excellence init shop`) keeps a single
 application at the repository root. Naming one or more composes them into one
 repository, each in its own component directory.
 
+## Build a complete AWS application
+
+One command stands up an entire Well-Architected application on AWS, ready to
+deploy, with every service kept as its own validated pack:
+
+```bash
+npx engineering-excellence init myapp aws-fullstack
+```
+
+What lands in `myapp/`:
+
+1. **A React frontend on CloudFront.** The Vite built React app is served from a
+   private S3 bucket through a CloudFront distribution over HTTPS, with single
+   page app routing.
+2. **A DynamoDB backed, Cognito authenticated API.** A five layer FastAPI service
+   persists through a DynamoDB table behind its repository interface, and a
+   Cognito user pool guards its routes with JSON Web Token validation.
+3. **S3 object storage.** An encrypted uploads bucket the service is scoped to
+   read and write.
+4. **One AWS CDK stack, three stages.** Everything above is provisioned by a
+   single AWS CDK application and promoted through dev, uat, and production by an
+   OpenID Connect federated GitHub Actions pipeline, so no long lived credential
+   is ever stored.
+5. **Gates that pass on day one.** Every law is enforced by `eep verify`, a
+   pre-commit hook, and CI, and the app passes its own gate the moment it is
+   scaffolded. We verify this the hard way: a blind AI agent given only the
+   generated instructions adds a persisted, authenticated feature and the gate
+   stays green.
+
+Today the blueprint composes the FastAPI and AWS Fargate stack above. A Node.js
+and TypeScript backend, an API Gateway serverless compute path, and optional
+capability slices (asynchronous messaging, search, caching, streaming, and SQL,
+added with `--with`) are the next variants on the way, each shipping as its own
+validated pack. The laws underneath every pack stay cloud neutral, so an Azure
+or Google Cloud blueprint reuses them.
+
 ## Agents and tools it works with
 
 The doctrine reaches your agent through the file that agent already reads. eep
@@ -174,20 +218,24 @@ the rules travel with the repository whether or not eep is ever run again.
 
 | Category | Framework or platform | Token | Status |
 |---|---|---|---|
+| **Blueprints** | AWS full stack app: React, FastAPI, DynamoDB, Cognito, S3, and CloudFront, composed and wired on AWS CDK | `aws-fullstack` | Available |
 | **Backend** | C++ | `cpp` | In development |
 | | FastAPI (Python) | `fastapi` | Available |
 | | Go | `go` | In development |
 | | Java Spring | `java` | In development |
 | | .NET ASP.NET | `dotnet` | In development |
 | | Node and TypeScript services | `node` | Available |
-| **Data and storage** | DynamoDB | `dynamodb` | In development |
+| **Data and storage** | Amazon DynamoDB | `aws-fullstack` | Available |
+| | Amazon S3 object storage | `aws-fullstack` | Available |
 | | PostgreSQL and SQL | `postgres` | In development |
 | | Redis | `redis` | In development |
+| **Auth and identity** | AWS Cognito | `aws-fullstack` | Available |
+| **Edge and CDN** | Amazon CloudFront | `aws-fullstack` | Available |
 | **Frontend** | Angular | `angular` | In development |
 | | React | `react` | Available |
 | | React Native | `react-native` | In development |
 | **Infrastructure** | AWS CDK Fargate | `cdk` | Available |
-| | AWS serverless | `aws` | Available |
+| | AWS serverless and API Gateway | `aws` | Available |
 | | Containers and Kubernetes | `docker` or `k8s` | Available |
 | | Power Platform | `power-platform` | In development |
 | | Terraform | `terraform` | In development |

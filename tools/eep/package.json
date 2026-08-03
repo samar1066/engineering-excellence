@@ -1,7 +1,7 @@
 {
   "name": "engineering-excellence",
-  "version": "0.8.0",
-  "description": "One command turns any repository into a place where AI coding agents build software the right way: doctrine, golden paths, generated agent instructions, and machine enforced gates for FastAPI, React, TypeScript, containers, AWS CDK, and GitHub Actions",
+  "version": "0.8.1",
+  "description": "Build a complete Well-Architected AWS full stack app (React, FastAPI, DynamoDB, Cognito, S3, CloudFront, CDK) from one command, or add doctrine, golden paths, generated AI coding agent instructions, and machine enforced gates to any repository",
   "license": "Apache-2.0",
   "author": "Samar Swami (@samar1066)",
   "homepage": "https://github.com/samar1066/engineering-excellence#readme",
@@ -30,7 +30,20 @@
     "github-actions",
     "ci-cd",
     "tdd",
-    "developer-experience"
+    "developer-experience",
+    "aws",
+    "aws-fullstack",
+    "full-stack",
+    "dynamodb",
+    "cognito",
+    "cloudfront",
+    "s3",
+    "serverless",
+    "api-gateway",
+    "well-architected",
+    "infrastructure-as-code",
+    "boilerplate",
+    "starter-kit"
   ],
   "type": "module",
   "bin": {
