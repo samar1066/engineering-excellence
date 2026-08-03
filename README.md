@@ -223,37 +223,34 @@ the rules travel with the repository whether or not eep is ever run again.
 
 ## What we support
 
-| Category | Framework or platform | Token | Status |
-|---|---|---|---|
-| **Blueprints** | AWS full stack app: React, a FastAPI or Node backend, DynamoDB, Cognito, S3, and CloudFront, composed and wired on AWS CDK | `aws-fullstack` | Available |
-| **Backend** | C++ | `cpp` | In development |
-| | FastAPI (Python) | `fastapi` | Available |
-| | Go | `go` | In development |
-| | Java Spring | `java` | In development |
-| | .NET ASP.NET | `dotnet` | In development |
-| | Node and TypeScript services | `node` | Available |
-| **Data and storage** | Amazon DynamoDB | `aws-fullstack` | Available |
-| | Amazon S3 object storage | `aws-fullstack` | Available |
-| | PostgreSQL and SQL | `postgres` | In development |
-| | Redis | `redis` | In development |
-| **Auth and identity** | AWS Cognito | `aws-fullstack` | Available |
-| **Edge and CDN** | Amazon CloudFront | `aws-fullstack` | Available |
-| **Frontend** | Angular | `angular` | In development |
-| | React | `react` | Available |
-| | React Native | `react-native` | In development |
-| **Infrastructure** | AWS CDK Fargate | `cdk` | Available |
-| | AWS serverless and API Gateway | `aws` | Available |
-| | Containers and Kubernetes | `docker` or `k8s` | Available |
-| | Power Platform | `power-platform` | In development |
-| | Terraform | `terraform` | In development |
-| **Delivery and CI** | Azure DevOps | `azure-devops` | In development |
-| | GitHub Actions | `github-actions` | Available |
-| | GitLab CI | `gitlab` | In development |
+Two kinds of things. A **blueprint** composes a whole application; **packs** are
+the building blocks you compose together or add to an existing repository.
 
-The list grows without redesign: every framework is a pack held to one
-executable contract, and the CLI discovers packs at runtime, so a new framework
-lights up the moment its pack lands. A guided website that walks you through the
-selection and hands you the finished command is on the roadmap.
+### Blueprints
+
+| Blueprint | What it composes | Token |
+|---|---|---|
+| **AWS full stack** | A React frontend on CloudFront, a FastAPI or Node backend with DynamoDB and Cognito, S3 object storage, and an AWS CDK deployment | `aws-fullstack` |
+
+Each AWS service the blueprint composes (DynamoDB, Cognito, S3, CloudFront) is
+its own validated pack, wired together for you. Pick the backend with
+`--backend node`; an API Gateway serverless compute path and capability slices
+(async, search, cache, streaming, SQL) are on the way.
+
+### Packs, by layer
+
+| Layer | Available today | On the roadmap |
+|---|---|---|
+| **Backend** | FastAPI (`fastapi`), Node and TypeScript (`node`) | Go, Java, .NET, C++ |
+| **Frontend** | React (`react`) | Angular, React Native |
+| **Data and storage** | DynamoDB, Amazon S3 (composed via `aws-fullstack`) | PostgreSQL, Redis |
+| **Auth and edge** | Cognito, CloudFront (composed via `aws-fullstack`) | |
+| **Infrastructure** | AWS CDK on Fargate (`cdk`), AWS serverless and API Gateway (`aws`), containers and Kubernetes (`docker` or `k8s`) | Terraform, Power Platform |
+| **Delivery** | GitHub Actions (`github-actions`) | GitLab CI, Azure DevOps |
+
+The list grows without redesign: every pack is held to one executable contract,
+and the CLI discovers packs at runtime, so a new one lights up the moment it
+lands. A guided website that emits the finished command is on the roadmap.
 
 ## How the support works
 
