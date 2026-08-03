@@ -21,13 +21,17 @@ export type BuiltinResult = { ok: boolean; detail: string; skipped?: true };
 const ALWAYS_IGNORED = ["**/.git/**", "**/node_modules/**", "**/.venv/**", "**/.eep/cache/**"];
 
 /**
- * Co owned agent configuration surfaces, at any depth and in any casing.
+ * Co owned and tool owned agent configuration surfaces, at any depth and in any casing.
  *
  * The managed block eep writes into these is style clean by construction, and the user content
  * around it is not corpus governed prose. A repository that has kept its own CLAUDE.md for years
  * must not have adopting eep turn every em dash in it into a blocking gate failure. The same
  * exclusion holds for docs-frontmatter, which would otherwise demand a title and an authors list
- * inside an agent configuration file.
+ * inside an agent configuration file. `copilot-instructions.md` is the same co owned surface one
+ * tool over, and any `.mdc` under a `.cursor` directory is a Cursor rule (eep's own eep.mdc, or a
+ * team's other rule files) whose whole purpose is to carry instruction prose rather than governed
+ * documentation. All of these stay outside the style and frontmatter sweeps; the secrets scan still
+ * reads them, because a planted credential is a repository wide fact wherever it lands.
  *
  * Matched on the lowercased basename rather than as a glob ignore pattern. macOS and Windows
  * checkouts are case insensitive, so `claude.md` there is the same file the agent reads and the same
@@ -35,10 +39,19 @@ const ALWAYS_IGNORED = ["**/.git/**", "**/node_modules/**", "**/.venv/**", "**/.
  * it as a filter also leaves the .gitignore derived patterns matched exactly as git matches them,
  * which turning on case insensitive globbing wholesale would not.
  */
-const AGENT_FILE_BASENAMES = new Set(["claude.md", "agents.md"]);
+const AGENT_FILE_BASENAMES = new Set(["claude.md", "agents.md", "copilot-instructions.md"]);
+
+// A Cursor rule is any `.mdc` sitting under a `.cursor` directory at any depth. The docs globs only
+// list `*.md`, so an `.mdc` is not swept today regardless; the check is kept explicit so a future
+// widening of that glob cannot silently start gating Cursor rule prose.
+function isCursorRule(relPath: string): boolean {
+  const segments = relPath.split(/[\\/]/);
+  const name = segments[segments.length - 1] ?? "";
+  return name.toLowerCase().endsWith(".mdc") && segments.slice(0, -1).includes(".cursor");
+}
 
 function isAgentFile(relPath: string): boolean {
-  return AGENT_FILE_BASENAMES.has(basename(relPath).toLowerCase());
+  return AGENT_FILE_BASENAMES.has(basename(relPath).toLowerCase()) || isCursorRule(relPath);
 }
 
 // The markdown builtins additionally skip the whole vendored .eep tree: those files are copies of

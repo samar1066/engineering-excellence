@@ -10,11 +10,20 @@ import {
   componentInstructionFiles,
   generateAgentFiles,
   lockedPackLayout,
+  rootSurfaceFiles,
 } from "../lib/generate.js";
 import { offerGlobalInstall } from "../lib/install-offer.js";
 import { findPackDir, loadPack } from "../lib/pack.js";
+import type { ToolToken } from "../lib/tools.js";
 import { vendorInto } from "../lib/vendor.js";
-import { buildEepYamlContent, installGitHook, runAdopt, type WritableProfile } from "./adopt.js";
+import {
+  buildEepYamlContent,
+  installGitHook,
+  resolveTools,
+  runAdopt,
+  toolsFromFlag,
+  type WritableProfile,
+} from "./adopt.js";
 
 export type InitOptions = {
   name: string;
@@ -27,6 +36,10 @@ export type InitOptions = {
   // Omitted means "offer it". Only an explicit false (--no-install-offer) silences both the
   // prompt and the hint, which is what CI and scripted runs want.
   installOffer?: boolean;
+  // The AI coding tools to generate for, as raw tokens. Undefined resolves one the same way adopt
+  // does: prompt in a TTY, else the AGENTS.md baseline for a fresh project (see resolveTools). The
+  // selection is resolved once and threaded into whichever materialize path runs.
+  tools?: string[];
 };
 
 const NAME_PATTERN = /^[a-z][a-z0-9_]*$/;
@@ -79,14 +92,15 @@ const SCAFFOLD_COMMIT_MESSAGE = "feat: scaffold from eep python-fastapi pack";
  */
 const ADOPT_COMMIT_MESSAGE = "chore: adopt engineering excellence gates";
 
-// Exactly what the vendor and generate steps write at the root, by path. Never `git add -A`: a
-// second sweeping commit would also pick up anything the scaffold's own .gitignore does not cover,
-// and a command that commits files the user did not ask it to commit is worse than one that leaves
-// them. The per component instruction files a composed project also gets are added to this list at
-// commit time, from the lock (see gitCommitGeneratedArtifacts).
-// .git/hooks/pre-commit is deliberately absent: git does not track its own hooks directory, so the
-// installed hook is a fact about the checkout rather than a file that can be committed.
-const GENERATED_ARTIFACTS = [".eep", "AGENTS.md", "CLAUDE.md", "eep.yaml"];
+// The vendor and generate outputs that are always written, whatever the tool selection: the vendored
+// tree and the human readable record. The agent instruction surfaces are added per selection at commit
+// time (see gitCommitGeneratedArtifacts), because which of them exist now depends on the chosen tools.
+// Never `git add -A`: a second sweeping commit would also pick up anything the scaffold's own
+// .gitignore does not cover, and a command that commits files the user did not ask it to commit is
+// worse than one that leaves them. .git/hooks/pre-commit is deliberately absent: git does not track
+// its own hooks directory, so the installed hook is a fact about the checkout rather than a committable
+// file.
+const GENERATED_ARTIFACTS = [".eep", "eep.yaml"];
 
 // Lets `git commit` succeed on a machine with no global user.name/user.email configured, without
 // reading or touching that machine's git config. execa's extendEnv defaults to true, so this is
@@ -236,15 +250,20 @@ async function gitInitAndCommit(projectDir: string, message: string): Promise<vo
  * and a component file left untracked is the same defect as an untracked root CLAUDE.md, one
  * directory down.
  *
- * Paths that do not exist are filtered out rather than passed to git, which refuses an unmatched
- * pathspec outright. All four root paths are written by every successful run today; the filter is
- * what keeps a future change to that set from turning into a failed init.
+ * The agent surfaces committed are exactly the ones the selection produced, root and component alike,
+ * so a project generated for cursor and copilot commits those two and no empty CLAUDE.md. Paths that
+ * do not exist are filtered out rather than passed to git, which refuses an unmatched pathspec
+ * outright, which also covers a selection of none writing no surfaces at all.
  */
-async function gitCommitGeneratedArtifacts(projectDir: string): Promise<void> {
+async function gitCommitGeneratedArtifacts(
+  projectDir: string,
+  tools: readonly ToolToken[],
+): Promise<void> {
   const env = GIT_IDENTITY_ENV;
   const generated = [
     ...GENERATED_ARTIFACTS,
-    ...componentInstructionFiles(lockedPackLayout(projectDir)),
+    ...rootSurfaceFiles(tools),
+    ...componentInstructionFiles(lockedPackLayout(projectDir), tools),
   ];
   const paths = generated.filter((relPath) => existsSync(join(projectDir, relPath)));
   if (paths.length === 0) return;
@@ -605,11 +624,17 @@ function buildRootGitignore(destDirs: string[]): string {
 
 // The composed equivalent of runAdopt's tail, minus detection: a composed root carries no
 // application files of its own to detect a pack from, so the set the user named on the command
-// line is vendored directly.
-function syncAtRoot(projectDir: string, corpusDir: string, packs: string[]): void {
+// line is vendored directly. The tool selection was resolved once in runInit and is threaded through
+// so the composed root and the single path store and generate for the identical set.
+function syncAtRoot(
+  projectDir: string,
+  corpusDir: string,
+  packs: string[],
+  tools: readonly ToolToken[],
+): void {
   vendorInto(projectDir, corpusDir, packs, INIT_PROFILE);
-  writeFileSync(join(projectDir, "eep.yaml"), buildEepYamlContent(INIT_PROFILE, packs));
-  generateAgentFiles(projectDir);
+  writeFileSync(join(projectDir, "eep.yaml"), buildEepYamlContent(INIT_PROFILE, packs, tools));
+  generateAgentFiles(projectDir, tools);
   installGitHook(projectDir);
 }
 
@@ -627,6 +652,7 @@ async function materializeComposed(
   plan: { packs: string[]; placements: Placement[] },
   projectDir: string,
   opts: InitOptions,
+  tools: readonly ToolToken[],
 ): Promise<void> {
   const selected = new Set(
     plan.placements.flatMap((placement) =>
@@ -681,21 +707,25 @@ async function materializeComposed(
   if (gitignore !== "") writeFileSync(join(projectDir, ".gitignore"), gitignore);
 
   await gitInitAndCommit(projectDir, composedCommitMessage(plan.packs));
-  syncAtRoot(projectDir, opts.corpusDir, plan.packs);
+  syncAtRoot(projectDir, opts.corpusDir, plan.packs, tools);
 }
 
 async function materializeSingle(
   scaffoldDir: string,
   projectDir: string,
   opts: InitOptions,
+  tools: readonly ToolToken[],
 ): Promise<void> {
   copyScaffold(scaffoldDir, projectDir, opts.name);
   await gitInitAndCommit(projectDir, SCAFFOLD_COMMIT_MESSAGE);
+  // The selection is passed as explicit tokens, so runAdopt uses it directly and never re prompts:
+  // runInit already asked the tool question once, before any directory was created.
   await runAdopt({
     targetDir: projectDir,
     corpusDir: opts.corpusDir,
     profile: INIT_PROFILE,
     yes: true,
+    tools: [...tools],
   });
 }
 
@@ -752,19 +782,27 @@ export async function runInit(opts: InitOptions): Promise<void> {
   const plan = planLayout(opts, opts.tokens ?? []);
 
   const projectDir = join(opts.targetDir, opts.name);
+
+  // Resolved once, before the project directory is created, so an unknown --tools token aborts with
+  // nothing written (like an unknown framework token), the tool question is asked at most once, and
+  // the single and composed paths store and generate for the identical set. A project that does not
+  // exist yet has no files to detect from, so without --tools or a prompt this is the AGENTS.md
+  // baseline.
+  const tools = await resolveTools(projectDir, opts.tools);
+
   const projectDirExistedBefore = ensureEmptyProjectDir(projectDir);
 
   try {
     if (plan.mode === "single") {
-      await materializeSingle(plan.scaffoldDir, projectDir, opts);
+      await materializeSingle(plan.scaffoldDir, projectDir, opts, tools);
     } else {
-      await materializeComposed(plan, projectDir, opts);
+      await materializeComposed(plan, projectDir, opts, tools);
     }
 
     // Both modes end the same way, so the second commit is made here rather than twice. Inside the
     // guarded block: a repository left with a scaffold commit and uncommitted governance is exactly
     // the half built state cleanupProjectDir exists to prevent.
-    await gitCommitGeneratedArtifacts(projectDir);
+    await gitCommitGeneratedArtifacts(projectDir, tools);
 
     printNextSteps(opts.name);
   } catch (error) {
@@ -782,7 +820,7 @@ export async function runInit(opts: InitOptions): Promise<void> {
   if (opts.installOffer !== false) await offerGlobalInstall();
 }
 
-type InitCliOptions = { pack: string; dir: string; installOffer: boolean };
+type InitCliOptions = { pack: string; dir: string; installOffer: boolean; tools?: string };
 
 export function register(program: Command): void {
   program
@@ -797,6 +835,10 @@ export function register(program: Command): void {
     )
     .option("--dir <target>", "directory to create the project under", process.cwd())
     .option("--no-install-offer", "skip the global install offer and its hint (CI and scripts)")
+    .option(
+      "--tools <tokens>",
+      "comma separated AI tools to generate for: claude, agents, copilot, cursor, none",
+    )
     .action(async (name: string, tokens: string[], options: InitCliOptions) => {
       try {
         await runInit({
@@ -806,6 +848,7 @@ export function register(program: Command): void {
           pack: options.pack,
           tokens,
           installOffer: options.installOffer,
+          tools: toolsFromFlag(options.tools),
         });
       } catch (error) {
         console.error(error instanceof Error ? error.message : String(error));

@@ -167,7 +167,12 @@ describe("eep adopt through the command line", () => {
     async () => {
       const dir = newFastApiDir();
 
-      const { exitCode, output } = await runCli(dir, ["adopt", "--yes"]);
+      const { exitCode, output } = await runCli(dir, [
+        "adopt",
+        "--yes",
+        "--tools",
+        "claude,agents",
+      ]);
 
       expect(output).not.toContain("refusing to adopt");
       expect(output).toContain("eep: adopted python-fastapi");

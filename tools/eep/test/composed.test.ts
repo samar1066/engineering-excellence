@@ -186,6 +186,9 @@ describe("a composed repository, built and then run", () => {
       corpusDir: corpus,
       tokens: STACKS.map((stack) => stack.pack),
       installOffer: false,
+      // This suite reads the component CLAUDE.md and AGENTS.md pair, so it composes under the pair
+      // selection rather than the AGENTS.md baseline a bare init would resolve to.
+      tools: ["claude", "agents"],
     });
     projectDir = join(targetDir, "shop");
     makeEnv = { PATH: [newEepShimDir(), childPath()].join(":") };

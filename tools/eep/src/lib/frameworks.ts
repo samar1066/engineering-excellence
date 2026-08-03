@@ -41,6 +41,8 @@ const ALIASES: ReadonlyArray<readonly [token: string, pack: string]> = [
   ["cpp", "cpp"],
   ["sql", "sql-postgres"],
   ["postgres", "sql-postgres"],
+  ["dynamodb", "dynamodb"],
+  ["redis", "redis"],
   ["aws", "aws-serverless"],
   ["serverless", "aws-serverless"],
   ["cdk", "aws-cdk"],

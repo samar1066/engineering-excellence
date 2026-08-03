@@ -7,9 +7,23 @@ import fg from "fast-glob";
 import { stringify as stringifyYaml } from "yaml";
 import { corpusRoot } from "../lib/corpus-root.js";
 import { detectPacks } from "../lib/detect.js";
-import { componentInstructionFiles, generateAgentFiles } from "../lib/generate.js";
+import {
+  CURSOR_RULE_FILE,
+  componentInstructionFiles,
+  generateAgentFiles,
+  rootSurfaceFiles,
+} from "../lib/generate.js";
 import { managedBlockState } from "../lib/managed-block.js";
 import { loadPack } from "../lib/pack.js";
+import {
+  formatToolSelection,
+  NONE_TOKEN,
+  parseToolSelection,
+  resolveToolsNonInteractive,
+  TOOL_LABELS,
+  TOOL_TOKENS,
+  type ToolToken,
+} from "../lib/tools.js";
 import { planPackLayout, vendorInto } from "../lib/vendor.js";
 
 // Deliberately narrower than resolve.ts's Profile: "steady" is reserved and resolveLaws rejects
@@ -22,11 +36,12 @@ export type AdoptOptions = {
   corpusDir: string;
   profile: WritableProfile;
   yes: boolean;
+  // The AI coding tools to generate instructions for, as raw tokens (claude, agents, copilot,
+  // cursor, none). Undefined means "resolve one": prompt in a TTY, else keep an existing eep.yaml
+  // selection, else detect from the repository's files, else the AGENTS.md baseline. See resolveTools.
+  tools?: string[];
 };
 
-// What a successful run writes at the repository root, always, whatever the pack set is. Shared
-// with the root framework sync, which writes exactly the same set.
-const ROOT_AGENT_FILES = ["AGENTS.md", "CLAUDE.md"];
 const TRAILING_PLANNED_FILES = ["eep.yaml"];
 
 /**
@@ -55,24 +70,42 @@ function agentFilePlanLine(targetDir: string, relPath: string): string {
 }
 
 /**
- * Every file this run will write, component instruction files included, and what it will do to
- * each agent file it finds already there.
+ * Every file this run will write for the given tool selection, and what it will do to each co owned
+ * file it finds already there.
  *
- * A composed repository's instructions are no longer one document: each pack pinned to a component
- * directory gets its own CLAUDE.md and AGENTS.md there (see lib/generate.ts). Those are files the
- * user's repository ends up carrying, so a plan that listed only the root pair would be asking for
- * consent to a smaller write than the one about to happen. Resolved from the corpus and the target
- * with the same rule the sync itself pins by, so the list is exact rather than indicative.
+ * Only the surfaces the selection names appear: CLAUDE.md, AGENTS.md, and the Copilot file as co
+ * owned managed blocks (with the create/append/refresh wording above), the Cursor rule as a whole
+ * file eep overwrites (so it is always "write"), plus the per component CLAUDE.md and AGENTS.md a
+ * composed layout adds for the chosen markdown tools. A selection of none writes no agent files at
+ * all, and says so, because the vendored .eep tree and the gate still land without them.
  *
- * The pre-commit line is resolved the same way; hookPlanLine is declared further down, beside the
- * hook constants it reads.
+ * Resolved from the corpus and the target with the same rule the sync itself pins by, so the list is
+ * exact rather than indicative. The pre-commit line is resolved the same way; hookPlanLine is
+ * declared further down, beside the hook constants it reads.
  */
-export function plannedFiles(targetDir: string, corpusDir: string, packs: string[]): string[] {
-  const component = componentInstructionFiles(planPackLayout(targetDir, corpusDir, packs));
-  const agentFiles = [...ROOT_AGENT_FILES, ...component].map((relPath) =>
-    agentFilePlanLine(targetDir, relPath),
-  );
-  return [".eep/", ...agentFiles, ...TRAILING_PLANNED_FILES, hookPlanLine(targetDir)];
+export function plannedFiles(
+  targetDir: string,
+  corpusDir: string,
+  packs: string[],
+  tools: readonly ToolToken[],
+): string[] {
+  const layout = planPackLayout(targetDir, corpusDir, packs);
+  const lines: string[] = [".eep/"];
+
+  for (const relPath of rootSurfaceFiles(tools)) {
+    lines.push(
+      relPath === CURSOR_RULE_FILE ? `write ${relPath}` : agentFilePlanLine(targetDir, relPath),
+    );
+  }
+  for (const relPath of componentInstructionFiles(layout, tools)) {
+    lines.push(agentFilePlanLine(targetDir, relPath));
+  }
+  if (tools.length === 0) {
+    lines.push("no agent instruction files (tools: none)");
+  }
+
+  lines.push(...TRAILING_PLANNED_FILES, hookPlanLine(targetDir));
+  return lines;
 }
 
 // The gate must run for a consumer who only ever reaches this CLI through npx, so a bare `eep` is
@@ -182,11 +215,12 @@ function listAllPackNames(corpusDir: string): string[] {
   return names.sort();
 }
 
-function printPlan(opts: AdoptOptions, packs: string[]): void {
+function printPlan(opts: AdoptOptions, packs: string[], tools: readonly ToolToken[]): void {
   console.log(`eep adopt: detected packs: ${packs.join(", ")}`);
   console.log(`eep adopt: profile: ${opts.profile}`);
+  console.log(`eep adopt: tools: ${formatToolSelection(tools)}`);
   console.log("eep adopt: will write:");
-  for (const file of plannedFiles(opts.targetDir, opts.corpusDir, packs)) {
+  for (const file of plannedFiles(opts.targetDir, opts.corpusDir, packs, tools)) {
     console.log(`  - ${file}`);
   }
 }
@@ -219,11 +253,93 @@ export async function confirmOrAbort(yes: boolean, verb: string): Promise<void> 
   }
 }
 
-// The human readable record of what was vendored. lock.yaml remains the authority; this file
-// exists so a reader (or an agent) can see the active set without parsing the lock. Shared with
-// the root framework sync so both commands write byte identical content for the same set.
-export function buildEepYamlContent(profile: WritableProfile, packs: string[]): string {
-  return stringifyYaml({ profile, packs });
+// Maps one comma separated prompt answer of numbers (1..n, or the None index) or tokens into a
+// selection. Unknown entries are ignored rather than fatal: a prompt is a conversation, and the
+// summary printed afterward shows what was understood. The None index, or a typed "none", clears it.
+function parsePromptAnswer(answer: string, noneIndex: number): ToolToken[] {
+  const raw: string[] = [];
+  for (const part of answer.split(",")) {
+    const trimmed = part.trim();
+    if (trimmed === "") continue;
+    const num = Number.parseInt(trimmed, 10);
+    if (!Number.isNaN(num) && String(num) === trimmed) {
+      if (num === noneIndex) return [];
+      const token = TOOL_TOKENS[num - 1];
+      if (token !== undefined) raw.push(token);
+    } else {
+      raw.push(trimmed);
+    }
+  }
+  return parseToolSelection(raw).tools;
+}
+
+/**
+ * The interactive multi select for the tool question. Reached only in a TTY (see resolveTools), so it
+ * is free to block on stdin.
+ *
+ * Each tool is a numbered line with the preselected set marked, plus a None line. One comma separated
+ * answer of numbers or tokens is read; an empty answer keeps the preselection, and None clears it.
+ */
+export async function promptToolSelection(preselect: readonly ToolToken[]): Promise<ToolToken[]> {
+  const chosen = new Set(preselect);
+  const noneIndex = TOOL_TOKENS.length + 1;
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    console.log("Which AI coding tools does your team use?");
+    TOOL_TOKENS.forEach((token, index) => {
+      const mark = chosen.has(token) ? "x" : " ";
+      console.log(`  ${index + 1}. [${mark}] ${TOOL_LABELS[token]} (${token})`);
+    });
+    console.log(`  ${noneIndex}. None (${NONE_TOKEN})`);
+    const answer = (
+      await rl.question(`Select (comma separated, default ${formatToolSelection(preselect)}): `)
+    ).trim();
+    return answer === "" ? [...preselect] : parsePromptAnswer(answer, noneIndex);
+  } finally {
+    rl.close();
+  }
+}
+
+/**
+ * The tool selection this run will store and generate for.
+ *
+ * An explicit list from `--tools` is parsed and validated and wins outright, so a scripted or CI run
+ * is fully deterministic. With nothing explicit, an interactive terminal is asked the multi select
+ * question, and everything else falls back to the non interactive precedence: keep an existing
+ * eep.yaml selection, else detect from the repository's files, else the AGENTS.md baseline (see
+ * lib/tools.ts). `preselect`, when given, seeds the prompt with the current set, which is what
+ * switch-ide passes so the question opens on what the repository already carries.
+ */
+export async function resolveTools(
+  targetDir: string,
+  flagTools: string[] | undefined,
+  preselect?: readonly ToolToken[],
+): Promise<ToolToken[]> {
+  if (flagTools !== undefined) {
+    const { tools, unknown } = parseToolSelection(flagTools);
+    if (unknown.length > 0) {
+      throw new Error(
+        `eep: unknown tool: ${unknown.join(", ")}; valid tools: ${TOOL_TOKENS.join(", ")}, ${NONE_TOKEN}`,
+      );
+    }
+    return tools;
+  }
+  if (process.stdin.isTTY) {
+    return await promptToolSelection(preselect ?? resolveToolsNonInteractive(targetDir));
+  }
+  return resolveToolsNonInteractive(targetDir);
+}
+
+// The human readable record of what was vendored, and the tool selection generation is driven by.
+// lock.yaml remains the authority for packs and profile; the tools list lives here because it is a
+// consumer choice, not a corpus fact, and generate reads it back when no selection is passed. Shared
+// with the root framework sync so both commands write byte identical content for the same inputs.
+export function buildEepYamlContent(
+  profile: WritableProfile,
+  packs: string[],
+  tools: readonly ToolToken[],
+): string {
+  return stringifyYaml({ profile, packs, tools: [...tools] });
 }
 
 // Installs the pre-commit gate when the target is a git checkout. When it is not, the rest of
@@ -295,28 +411,35 @@ export function installGitHook(targetDir: string): void {
 }
 
 /**
- * Consumer onboarding, end to end: detect the packs this repo matches, plan and confirm the
- * write, then vendor the corpus, write eep.yaml, generate AGENTS.md/CLAUDE.md, and install the
- * git pre-commit gate. Throws (never exits the process itself) on a failed detection, a declined
- * or non interactive confirmation, or anything the underlying vendor/generate steps throw.
+ * Consumer onboarding, end to end: detect the packs this repo matches, resolve which AI tools to
+ * generate for, plan and confirm the write, then vendor the corpus, write eep.yaml (packs plus the
+ * tool selection), generate the selected agent surfaces, and install the git pre-commit gate. Throws
+ * (never exits the process itself) on a failed detection, an unknown `--tools` token, a declined or
+ * non interactive confirmation, or anything the underlying vendor/generate steps throw.
+ *
+ * The tool question is asked after the packs are known and before anything is written, so the plan
+ * lists exactly the surfaces the selection produces (see resolveTools, plannedFiles).
  */
-export async function runAdopt(opts: AdoptOptions): Promise<{ packs: string[] }> {
+export async function runAdopt(
+  opts: AdoptOptions,
+): Promise<{ packs: string[]; tools: ToolToken[] }> {
   const packs = detectPacks(opts.targetDir, opts.corpusDir);
   if (packs.length === 0) {
     const supported = listAllPackNames(opts.corpusDir).join(", ");
     throw new Error(`eep: no pack detected; supported packs: ${supported}`);
   }
 
-  printPlan(opts, packs);
+  const tools = await resolveTools(opts.targetDir, opts.tools);
+  printPlan(opts, packs, tools);
   await confirmOrAbort(opts.yes, "adopt");
 
   vendorInto(opts.targetDir, opts.corpusDir, packs, opts.profile);
-  writeFileSync(join(opts.targetDir, "eep.yaml"), buildEepYamlContent(opts.profile, packs));
-  generateAgentFiles(opts.targetDir);
+  writeFileSync(join(opts.targetDir, "eep.yaml"), buildEepYamlContent(opts.profile, packs, tools));
+  generateAgentFiles(opts.targetDir, tools);
 
   installGitHook(opts.targetDir);
 
-  return { packs };
+  return { packs, tools };
 }
 
 export function toWritableProfile(value: string): WritableProfile {
@@ -324,7 +447,13 @@ export function toWritableProfile(value: string): WritableProfile {
   throw new Error(`eep: unknown profile "${value}"; expected greenfield or evolving`);
 }
 
-type AdoptCliOptions = { profile: string; corpus?: string; yes: boolean };
+type AdoptCliOptions = { profile: string; corpus?: string; yes: boolean; tools?: string };
+
+// Splits a comma separated --tools value into raw tokens, or undefined when the flag was absent so
+// the resolver knows to prompt or apply precedence. Shared with the root sync's registration.
+export function toolsFromFlag(value: string | undefined): string[] | undefined {
+  return value === undefined ? undefined : value.split(",");
+}
 
 export function register(program: Command): void {
   program
@@ -333,17 +462,24 @@ export function register(program: Command): void {
     .option("--profile <profile>", "greenfield or evolving", "evolving")
     .option("--corpus <dir>", "path to the eep corpus (defaults to this CLI's own corpus checkout)")
     .option("--yes", "skip the interactive confirmation prompt", false)
+    .option(
+      "--tools <tokens>",
+      "comma separated AI tools to generate for: claude, agents, copilot, cursor, none",
+    )
     .action(async (options: AdoptCliOptions) => {
       try {
         const profile = toWritableProfile(options.profile);
         const corpusDir = options.corpus ?? corpusRoot();
-        const { packs } = await runAdopt({
+        const { packs, tools } = await runAdopt({
           targetDir: process.cwd(),
           corpusDir,
           profile,
           yes: options.yes,
+          tools: toolsFromFlag(options.tools),
         });
-        console.log(`eep: adopted ${packs.join(", ")} under profile ${profile}`);
+        console.log(
+          `eep: adopted ${packs.join(", ")} under profile ${profile} for ${formatToolSelection(tools)}`,
+        );
       } catch (error) {
         console.error(error instanceof Error ? error.message : String(error));
         process.exitCode = 1;

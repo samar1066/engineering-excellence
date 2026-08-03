@@ -15,9 +15,14 @@ import { parse as parseYaml } from "yaml";
 import { capabilityScreenLines, runSync } from "../src/commands/root.js";
 import { TIP_LINE } from "../src/lib/install-offer.js";
 import { repoRoot } from "../src/lib/schema.js";
+import type { ToolToken } from "../src/lib/tools.js";
 import { childPath } from "./helpers.js";
 
 const corpusDir = repoRoot();
+
+// The CLAUDE.md and AGENTS.md pair, the selection the file set assertions below run under. A fresh
+// directory with no prior selection would otherwise resolve to the AGENTS.md baseline alone.
+const PAIR: ToolToken[] = ["claude", "agents"];
 
 function newTargetDir(prefix: string): string {
   return mkdtempSync(join(tmpdir(), prefix));
@@ -88,10 +93,17 @@ describe("runSync", () => {
     await gitInit(targetDir);
     writeFastApiPyproject(targetDir);
 
-    const result = await runSync({ targetDir, corpusDir, tokens: ["fastapi"], yes: true });
+    const result = await runSync({
+      targetDir,
+      corpusDir,
+      tokens: ["fastapi"],
+      yes: true,
+      tools: PAIR,
+    });
 
     expect(result.packs).toEqual(["python-fastapi"]);
     expect(result.profile).toBe("evolving");
+    expect(result.tools).toEqual(PAIR);
     expect(existsSync(join(targetDir, ".eep", "lock.yaml"))).toBe(true);
     expect(existsSync(join(targetDir, "CLAUDE.md"))).toBe(true);
     expect(existsSync(join(targetDir, "AGENTS.md"))).toBe(true);
@@ -105,7 +117,7 @@ describe("runSync", () => {
     expect(hookContent).toContain("npx -y engineering-excellence");
 
     const parsed = parseYaml(readFileSync(join(targetDir, "eep.yaml"), "utf8"));
-    expect(parsed).toEqual({ profile: "evolving", packs: ["python-fastapi"] });
+    expect(parsed).toEqual({ profile: "evolving", packs: ["python-fastapi"], tools: PAIR });
   });
 
   // Explicit selection is a declaration of intent, not a claim about what is already on disk: a
@@ -113,7 +125,13 @@ describe("runSync", () => {
   it("syncs a directory whose contents do not match the requested pack yet", async () => {
     const targetDir = newTargetDir("eep-sync-nodetect-");
 
-    const result = await runSync({ targetDir, corpusDir, tokens: ["fastapi"], yes: true });
+    const result = await runSync({
+      targetDir,
+      corpusDir,
+      tokens: ["fastapi"],
+      yes: true,
+      tools: PAIR,
+    });
 
     expect(result.packs).toEqual(["python-fastapi"]);
     expect(existsSync(join(targetDir, ".eep", "lock.yaml"))).toBe(true);
@@ -274,11 +292,19 @@ describe("runSync", () => {
       tokens: ["fastapi", "react"],
       yes: true,
       installOffer: false,
+      tools: PAIR,
     });
     expect(existsSync(join(targetDir, "frontend", "CLAUDE.md"))).toBe(true);
     expect(existsSync(join(targetDir, "backend", "AGENTS.md"))).toBe(true);
 
-    await runSync({ targetDir, corpusDir, tokens: ["fastapi"], yes: true, installOffer: false });
+    await runSync({
+      targetDir,
+      corpusDir,
+      tokens: ["fastapi"],
+      yes: true,
+      installOffer: false,
+      tools: PAIR,
+    });
 
     expect(existsSync(join(targetDir, "frontend", "CLAUDE.md"))).toBe(false);
     expect(existsSync(join(targetDir, "frontend", "AGENTS.md"))).toBe(false);
@@ -321,6 +347,57 @@ describe("runSync", () => {
     await runSync({ targetDir, corpusDir, tokens: ["fastapi"], yes: true });
 
     expect(readFileSync(waiversPath, "utf8")).toBe("waivers: []\n");
+  });
+
+  // The selection is stored in eep.yaml in canonical order and drives which surfaces exist: a cursor
+  // and copilot sync writes those two and no CLAUDE.md or AGENTS.md.
+  it("stores the tool selection and generates only its surfaces", async () => {
+    const targetDir = newTargetDir("eep-sync-tools-");
+
+    const result = await runSync({
+      targetDir,
+      corpusDir,
+      tokens: ["fastapi"],
+      yes: true,
+      installOffer: false,
+      tools: ["cursor", "copilot"],
+    });
+
+    expect(result.tools).toEqual(["copilot", "cursor"]);
+    expect(existsSync(join(targetDir, ".cursor", "rules", "eep.mdc"))).toBe(true);
+    expect(existsSync(join(targetDir, ".github", "copilot-instructions.md"))).toBe(true);
+    expect(existsSync(join(targetDir, "CLAUDE.md"))).toBe(false);
+    expect(existsSync(join(targetDir, "AGENTS.md"))).toBe(false);
+    expect(parseYaml(readFileSync(join(targetDir, "eep.yaml"), "utf8")).tools).toEqual([
+      "copilot",
+      "cursor",
+    ]);
+  });
+
+  // Precedence: a later sync that names no tools keeps the selection eep.yaml already records, so
+  // adding a framework never silently changes which tools a repository generates for.
+  it("keeps the stored tool selection when a later sync passes no tools", async () => {
+    const targetDir = newTargetDir("eep-sync-tools-keep-");
+    await runSync({
+      targetDir,
+      corpusDir,
+      tokens: ["fastapi"],
+      yes: true,
+      installOffer: false,
+      tools: ["cursor"],
+    });
+
+    const second = await runSync({
+      targetDir,
+      corpusDir,
+      tokens: ["fastapi"],
+      yes: true,
+      installOffer: false,
+    });
+
+    expect(second.tools).toEqual(["cursor"]);
+    expect(existsSync(join(targetDir, ".cursor", "rules", "eep.mdc"))).toBe(true);
+    expect(existsSync(join(targetDir, "CLAUDE.md"))).toBe(false);
   });
 });
 

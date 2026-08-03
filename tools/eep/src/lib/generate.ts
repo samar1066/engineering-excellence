@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import fg from "fast-glob";
 import { parse as parseYaml } from "yaml";
@@ -6,6 +6,7 @@ import { VERSION } from "../version.js";
 import { readFrontmatter } from "./frontmatter.js";
 import { stripManagedBlock, writeManagedBlock } from "./managed-block.js";
 import { type Profile, type ResolvedLaw, resolveLaws } from "./resolve.js";
+import { DEFAULT_TOOLS, readEepTools, type ToolToken } from "./tools.js";
 import type { PackLayout } from "./vendor.js";
 
 const PROFILE_BLOCK_TEXT = {
@@ -22,10 +23,41 @@ const VERIFY_FOOTER =
   "Before declaring work done run `eep verify`. On failure run `eep explain <LAW-ID>`. " +
   "Configuration authority is .eep/lock.yaml; eep.yaml is a human readable record only.";
 
-// Both names carry the same generated block, always. Agents read one or the other depending on the
-// tool that spawned them, and two generated regions that could drift apart would be two sets of
-// instructions. What surrounds the block is the repository's own and may differ between the two.
-const AGENT_FILE_NAMES = ["AGENTS.md", "CLAUDE.md"] as const;
+// The two component capable surfaces, each a co owned markdown file carrying the same generated
+// block, and each written only when its tool is in the selection. An agent reads one or the other
+// depending on the tool that spawned it, so the two generated regions must never drift; what
+// surrounds the block is the repository's own and may differ between them. CLAUDE.md pairs with the
+// claude token, AGENTS.md with the agents token, at the root and in every component directory.
+const CLAUDE_FILE_NAME = "CLAUDE.md";
+const AGENTS_FILE_NAME = "AGENTS.md";
+const AGENT_FILE_NAMES = [AGENTS_FILE_NAME, CLAUDE_FILE_NAME] as const;
+
+// Which component file name each of the two component capable tokens owns. copilot and cursor are
+// absent because they write no component files: they are root only whatever the layout.
+const COMPONENT_FILE_FOR_TOKEN: Partial<Record<ToolToken, string>> = {
+  claude: CLAUDE_FILE_NAME,
+  agents: AGENTS_FILE_NAME,
+};
+
+// The two tool surfaces beyond the agent pair, both at the repository root and both carrying the
+// identical root body, each written only when its tool is selected. GitHub Copilot reads a managed
+// block inside a markdown file the repository may already own, so it is co owned exactly like
+// CLAUDE.md: user content around the block is preserved. Cursor reads a rule file eep owns outright,
+// namespaced eep.mdc, so it carries no block and a team's other .cursor/rules/*.mdc are never
+// touched. Both are root only, one each; component directories carry only CLAUDE.md and AGENTS.md.
+export const COPILOT_INSTRUCTIONS_FILE = ".github/copilot-instructions.md";
+export const CURSOR_RULE_FILE = ".cursor/rules/eep.mdc";
+
+// The frontmatter Cursor requires at the top of a rule file. alwaysApply true loads the rule into
+// every request in the repository rather than only when a path glob matches, which is the behavior
+// the agent pair and the Copilot file already have. The instruction body sits below it, unchanged
+// from what every other root surface carries.
+const CURSOR_FRONTMATTER = [
+  "---",
+  "description: Engineering Excellence Program doctrine and golden paths",
+  "alwaysApply: true",
+  "---",
+].join("\n");
 
 const ROUTER_HEADING = "## Components and where their golden paths live";
 
@@ -115,18 +147,49 @@ export function isMultiLayout(packs: readonly PackLayout[]): boolean {
   return packs.length > 1 || packs.some((pack) => pack.workdir !== null);
 }
 
+// The component file names the selection actually writes: CLAUDE.md when claude is chosen, AGENTS.md
+// when agents is chosen, in that stable order. copilot and cursor contribute none.
+function componentFileNames(tools: readonly ToolToken[]): string[] {
+  return AGENT_FILE_NAMES.filter((name) =>
+    tools.some((token) => COMPONENT_FILE_FOR_TOKEN[token] === name),
+  );
+}
+
 /**
- * Every component instruction file this layout writes, as target relative paths.
+ * Every component instruction file this layout and selection writes, as target relative paths.
  *
- * Empty for a single component layout, which writes nothing outside the repository root.
+ * Empty for a single component layout, which writes nothing outside the repository root, and empty
+ * for a selection that includes neither claude nor agents. Used by the commands that have to name
+ * the files a generate pass produced: the plan printed before a write, and the artifacts init
+ * commits after one.
  */
-export function componentInstructionFiles(packs: readonly PackLayout[]): string[] {
+export function componentInstructionFiles(
+  packs: readonly PackLayout[],
+  tools: readonly ToolToken[],
+): string[] {
   if (!isMultiLayout(packs)) return [];
+  const names = componentFileNames(tools);
   const files: string[] = [];
   for (const pack of packs) {
     if (pack.workdir === null) continue;
-    for (const name of AGENT_FILE_NAMES) files.push(`${pack.workdir}/${name}`);
+    for (const name of names) files.push(`${pack.workdir}/${name}`);
   }
+  return files;
+}
+
+/**
+ * The root surface files this selection writes, as target relative paths, in a stable order.
+ *
+ * One entry per chosen tool: CLAUDE.md, AGENTS.md, the Copilot file, the Cursor rule. Empty for the
+ * "none" selection. The commands use it to plan and to commit exactly the root files a generate pass
+ * produces, without re listing the ones the selection leaves out.
+ */
+export function rootSurfaceFiles(tools: readonly ToolToken[]): string[] {
+  const files: string[] = [];
+  if (tools.includes("claude")) files.push(CLAUDE_FILE_NAME);
+  if (tools.includes("agents")) files.push(AGENTS_FILE_NAME);
+  if (tools.includes("copilot")) files.push(COPILOT_INSTRUCTIONS_FILE);
+  if (tools.includes("cursor")) files.push(CURSOR_RULE_FILE);
   return files;
 }
 
@@ -316,21 +379,129 @@ function buildComponentBody(packName: string, stackBody: string): string {
 }
 
 /**
- * Writes one generated body into both agent file names in `dir`, as a managed block each.
+ * Reconciles one co owned managed block surface with the selection: write the block when the tool is
+ * chosen, or strip eep's block back out when it is not, preserving whatever the file carries around
+ * it either way.
  *
- * The invariant this upholds is no longer "the two files are byte identical": a repository may have
- * carried its own CLAUDE.md for years and its own AGENTS.md for a week, and neither is ours to
- * reconcile. What must be identical is the generated region, because an agent reading one name or
- * the other has to be held to exactly the same instructions, and that follows from both calls
- * receiving the same body here.
- *
- * `relDir` is the target relative directory, used only to name a file in a malformed block warning.
+ * The strip half is the deselection path (see stripManagedSurface): a file that was nothing but our
+ * block is deleted, a file where a team wrote prose around it keeps that prose and loses only the
+ * block, and a file that never carried our block is left untouched. `relPath` names the file in a
+ * malformed block warning, so the reader sees the path they typed rather than a temporary directory.
  */
-function writeAgentPair(dir: string, relDir: string, body: string): void {
-  for (const name of AGENT_FILE_NAMES) {
-    const relPath = relDir === "" ? name : `${relDir}/${name}`;
-    writeManagedBlock(join(dir, name), relPath, body);
+function syncManagedSurface(
+  absPath: string,
+  relPath: string,
+  body: string,
+  selected: boolean,
+): void {
+  if (selected) {
+    writeManagedBlock(absPath, relPath, body);
+  } else {
+    stripManagedSurface(absPath);
   }
+}
+
+/**
+ * Removes eep's managed block from a co owned surface while keeping everything else the file holds.
+ *
+ * The counterpart to writeManagedBlock, used when a tool is deselected. A file that was nothing but
+ * our block is deleted (eep created it, so nothing of the team's is lost); a file where prose sits
+ * around our block keeps that prose and loses only the block; a file that never carried our block, or
+ * is absent, is left exactly as it is. Shares stripManagedBlock with removeStaleComponentFiles, so a
+ * deselected Copilot file is treated exactly as a dropped component's CLAUDE.md is.
+ */
+function stripManagedSurface(absPath: string): void {
+  if (!existsSync(absPath)) return;
+  const content = readFileSync(absPath, "utf8");
+  const remainder = stripManagedBlock(content);
+  if (remainder === content) return;
+  if (remainder === null) {
+    rmSync(absPath, { force: true });
+    return;
+  }
+  writeFileSync(absPath, remainder);
+}
+
+/**
+ * Writes the Cursor rule as a whole file eep owns.
+ *
+ * No managed block: the file is namespaced eep.mdc, so eep owns every byte of it and rewrites it in
+ * full each run, which leaves a team's other .cursor/rules/*.mdc untouched by construction. The
+ * frontmatter Cursor requires sits above the same body the agent pair and the Copilot file carry.
+ * Creates .cursor/rules, which a repository that has never used Cursor will not have.
+ */
+function writeCursorRule(targetDir: string, body: string): void {
+  const absPath = join(targetDir, ".cursor", "rules", "eep.mdc");
+  mkdirSync(dirname(absPath), { recursive: true });
+  writeFileSync(absPath, `${CURSOR_FRONTMATTER}\n\n${body}`);
+}
+
+/**
+ * Reconciles all four root surfaces with the selection, so an agent reaching this repository through
+ * a chosen tool is held to the identical instructions and a tool the team did not choose leaves no
+ * file behind.
+ *
+ * CLAUDE.md, AGENTS.md, and the Copilot file are co owned: each is written as a managed block when
+ * its tool is chosen and stripped back out when it is not, preserving user content either way (see
+ * syncManagedSurface). The Cursor rule is eep's own file: written whole when cursor is chosen, deleted
+ * when it is not. All four take the same body, so there is one instruction text and up to four ways
+ * in, never several that can drift apart.
+ */
+function writeRootSurfaces(
+  targetDir: string,
+  body: string,
+  selected: ReadonlySet<ToolToken>,
+): void {
+  syncManagedSurface(
+    join(targetDir, CLAUDE_FILE_NAME),
+    CLAUDE_FILE_NAME,
+    body,
+    selected.has("claude"),
+  );
+  syncManagedSurface(
+    join(targetDir, AGENTS_FILE_NAME),
+    AGENTS_FILE_NAME,
+    body,
+    selected.has("agents"),
+  );
+  syncManagedSurface(
+    join(targetDir, ".github", "copilot-instructions.md"),
+    COPILOT_INSTRUCTIONS_FILE,
+    body,
+    selected.has("copilot"),
+  );
+  if (selected.has("cursor")) {
+    writeCursorRule(targetDir, body);
+  } else {
+    rmSync(join(targetDir, ".cursor", "rules", "eep.mdc"), { force: true });
+  }
+}
+
+/**
+ * Reconciles one component directory's two agent files with the selection.
+ *
+ * The composed layout's per component golden path is carried in CLAUDE.md and AGENTS.md, each written
+ * when its tool is chosen and stripped when it is not, exactly as at the root. copilot and cursor have
+ * no component files, so they are not touched here.
+ */
+function writeComponentPair(
+  dir: string,
+  relDir: string,
+  body: string,
+  selected: ReadonlySet<ToolToken>,
+): void {
+  syncManagedSurface(
+    join(dir, CLAUDE_FILE_NAME),
+    `${relDir}/${CLAUDE_FILE_NAME}`,
+    body,
+    selected.has("claude"),
+  );
+  syncManagedSurface(
+    join(dir, AGENTS_FILE_NAME),
+    `${relDir}/${AGENTS_FILE_NAME}`,
+    body,
+    selected.has("agents"),
+  );
 }
 
 function firstLine(text: string): string {
@@ -384,11 +555,20 @@ function removeStaleComponentFiles(targetDir: string, keep: ReadonlySet<string>)
 }
 
 /**
- * Builds this repository's agent instructions from its vendored `.eep/` tree and writes them into
- * the managed block of `AGENTS.md` and `CLAUDE.md`, leaving whatever else those files carry exactly
- * where it was (see lib/managed-block.ts).
+ * Builds this repository's agent instructions from its vendored `.eep/` tree and writes them into the
+ * surfaces the tool selection names, stripping eep's footprint from any surface the selection leaves
+ * out.
  *
- * The layout forks on what the lock records, and only there (see isMultiLayout).
+ * The selection is a set of tool tokens (see lib/tools.ts), passed in or read from eep.yaml, defaulting
+ * to the AGENTS.md baseline when neither answers. Each chosen tool gets its file carrying the identical
+ * body: CLAUDE.md and AGENTS.md and the Copilot file as co owned managed blocks (user content around
+ * them preserved), the Cursor rule as eep's own whole file. Each unchosen tool has its block stripped
+ * back out (or its rule deleted), so deselecting a tool on a later run removes exactly what it wrote and
+ * nothing a team wrote around it. A selection of none writes no agent files at all.
+ *
+ * The layout forks on what the lock records, and only there (see isMultiLayout). The root surfaces are
+ * reconciled in both layouts; the component pair (CLAUDE.md and AGENTS.md only, per the selection) is
+ * composed layout only, because copilot and cursor are root surfaces whatever the layout.
  *
  * A single component repository gets one document, exactly as every release before this one wrote
  * it: the generated-file header, the profile enforcement block, the constitution, the pack's
@@ -403,16 +583,22 @@ function removeStaleComponentFiles(targetDir: string, keep: ReadonlySet<string>)
  * proves. The root keeps everything that is true of the whole repository (the constitution, the
  * laws in force, the gate) and points at the rest.
  *
- * Regeneration rewrites every managed block it owns, and removes the component blocks a narrower
- * pack set leaves behind (see removeStaleComponentFiles), so the generated regions always reflect
- * only the current lock. Throws when `${targetDir}/.eep/lock.yaml` is absent (no vendored corpus to
- * read), and propagates whatever resolveLaws throws, including its rejection of a "steady" profile.
+ * Regeneration rewrites every managed block the selection keeps, strips every surface it drops, and
+ * removes the component blocks a narrower pack set leaves behind (see removeStaleComponentFiles), so
+ * the generated regions always reflect the current lock and the current selection together. Throws
+ * when `${targetDir}/.eep/lock.yaml` is absent (no vendored corpus to read), and propagates whatever
+ * resolveLaws throws, including its rejection of a "steady" profile.
  */
-export function generateAgentFiles(targetDir: string): void {
+export function generateAgentFiles(targetDir: string, tools?: readonly ToolToken[]): void {
   const lockPath = join(targetDir, ".eep", "lock.yaml");
   if (!existsSync(lockPath)) {
     throw new Error("eep: no .eep found; run eep adopt first");
   }
+
+  // The selection drives which surfaces are written; the commands pass it explicitly (they just
+  // resolved and stored it), and a direct call falls back to the stored eep.yaml selection, then to
+  // the AGENTS.md baseline. A set makes the per surface "is this tool chosen" checks below cheap.
+  const selected = new Set(tools ?? readEepTools(targetDir) ?? DEFAULT_TOOLS);
 
   const lock = readYamlObject(lockPath);
   const packs = toPackLayout(lock.packs);
@@ -450,15 +636,16 @@ export function generateAgentFiles(targetDir: string): void {
     : [];
   removeStaleComponentFiles(targetDir, new Set(componentDirs));
 
-  writeAgentPair(targetDir, "", `${sections.join("\n\n")}\n`);
+  writeRootSurfaces(targetDir, `${sections.join("\n\n")}\n`, selected);
 
   if (!multi) return;
   for (const pack of packs) {
     if (pack.workdir === null) continue;
-    writeAgentPair(
+    writeComponentPair(
       join(targetDir, pack.workdir),
       pack.workdir,
       buildComponentBody(pack.name, readStackBody(targetDir, pack.name)),
+      selected,
     );
   }
 }

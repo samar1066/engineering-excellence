@@ -14,12 +14,15 @@ import {
 import { generateAgentFiles } from "../lib/generate.js";
 import { offerGlobalInstall } from "../lib/install-offer.js";
 import { findPackDir, loadPack } from "../lib/pack.js";
+import { formatToolSelection, type ToolToken } from "../lib/tools.js";
 import { vendorInto } from "../lib/vendor.js";
 import {
   buildEepYamlContent,
   confirmOrAbort,
   installGitHook,
   plannedFiles,
+  resolveTools,
+  toolsFromFlag,
   toWritableProfile,
   type WritableProfile,
 } from "./adopt.js";
@@ -32,6 +35,10 @@ export type SyncOptions = {
   // existing lock file, or evolving when there is none. See resolveProfile.
   profile?: WritableProfile;
   yes: boolean;
+  // The AI coding tools to generate for, as raw tokens. Undefined resolves one the same way adopt
+  // does: prompt in a TTY, else keep the existing eep.yaml selection, else detect, else the AGENTS.md
+  // baseline (see resolveTools). A shorter selection than last time removes the deselected surfaces.
+  tools?: string[];
   // Omitted means "offer it". Only an explicit false (--no-install-offer) silences both the
   // prompt and the hint, which is what CI and scripted runs want.
   installOffer?: boolean;
@@ -40,6 +47,7 @@ export type SyncOptions = {
 export type SyncResult = {
   packs: string[];
   profile: WritableProfile;
+  tools: ToolToken[];
   comingSoon: string[];
 };
 
@@ -150,11 +158,17 @@ function printRemovals(corpusDir: string, previous: string[], next: string[]): v
   }
 }
 
-function printPlan(opts: SyncOptions, packs: string[], profile: WritableProfile): void {
+function printPlan(
+  opts: SyncOptions,
+  packs: string[],
+  profile: WritableProfile,
+  tools: readonly ToolToken[],
+): void {
   console.log(`eep: syncing this directory to: ${packs.join(", ")}`);
   console.log(`eep: profile: ${profile}`);
+  console.log(`eep: tools: ${formatToolSelection(tools)}`);
   console.log("eep: will write:");
-  for (const file of plannedFiles(opts.targetDir, opts.corpusDir, packs)) {
+  for (const file of plannedFiles(opts.targetDir, opts.corpusDir, packs, tools)) {
     console.log(`  - ${file}`);
   }
 }
@@ -251,12 +265,13 @@ export async function runSync(opts: SyncOptions): Promise<SyncResult> {
   const previousPacks = lockedPackNames(currentLock);
 
   const profile = resolveProfile(opts, currentLock);
-  printPlan(opts, packs, profile);
+  const tools = await resolveTools(opts.targetDir, opts.tools);
+  printPlan(opts, packs, profile, tools);
   await confirmOrAbort(opts.yes, "sync");
 
   vendorInto(opts.targetDir, opts.corpusDir, packs, profile);
-  writeFileSync(join(opts.targetDir, "eep.yaml"), buildEepYamlContent(profile, packs));
-  generateAgentFiles(opts.targetDir);
+  writeFileSync(join(opts.targetDir, "eep.yaml"), buildEepYamlContent(profile, packs, tools));
+  generateAgentFiles(opts.targetDir, tools);
 
   installGitHook(opts.targetDir);
 
@@ -265,10 +280,16 @@ export async function runSync(opts: SyncOptions): Promise<SyncResult> {
   // Last, and only ever additive: everything above has already landed, and offerGlobalInstall
   // never throws, so nothing this does can turn a completed sync into a failed command.
   if (opts.installOffer !== false) await offerGlobalInstall();
-  return { packs, profile, comingSoon };
+  return { packs, profile, tools, comingSoon };
 }
 
-type RootCliOptions = { profile?: string; corpus?: string; yes: boolean; installOffer: boolean };
+type RootCliOptions = {
+  profile?: string;
+  corpus?: string;
+  yes: boolean;
+  installOffer: boolean;
+  tools?: string;
+};
 
 /**
  * Wires the framework selector onto the program itself, as a variadic positional argument.
@@ -285,6 +306,10 @@ export function register(program: Command): void {
     .option("--corpus <dir>", "path to the eep corpus (defaults to this CLI's own corpus)")
     .option("--yes", "skip the interactive confirmation prompt", false)
     .option("--no-install-offer", "skip the global install offer and its hint (CI and scripts)")
+    .option(
+      "--tools <tokens>",
+      "comma separated AI tools to generate for: claude, agents, copilot, cursor, none",
+    )
     .action(async (frameworks: string[], options: RootCliOptions) => {
       try {
         const corpusDir = options.corpus ?? corpusRoot();
@@ -299,6 +324,7 @@ export function register(program: Command): void {
           profile: options.profile === undefined ? undefined : toWritableProfile(options.profile),
           yes: options.yes,
           installOffer: options.installOffer,
+          tools: toolsFromFlag(options.tools),
         });
       } catch (error) {
         console.error(error instanceof Error ? error.message : String(error));

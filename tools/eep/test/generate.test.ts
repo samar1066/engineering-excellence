@@ -30,9 +30,20 @@ const EN_DASH = "\u2013";
 
 const CORPUS = repoRoot();
 
+// The selection most of these tests run under: the CLAUDE.md and AGENTS.md pair, which is what every
+// release before the tool selection wrote unconditionally. Written into eep.yaml so a bare
+// generateAgentFiles(dir) reads it back, the same way the commands drive generation from the stored
+// selection. Tests that exercise other selections pass tools explicitly or write a different eep.yaml.
+const PAIR_TOOLS = ["claude", "agents"] as const;
+
+function writeToolsYaml(dir: string, tools: readonly string[]): void {
+  writeFileSync(join(dir, "eep.yaml"), stringifyYaml({ tools: [...tools] }));
+}
+
 function newVendoredTarget(): string {
   const dir = mkdtempSync(join(tmpdir(), "eep-generate-"));
   vendorInto(dir, CORPUS, ["python-fastapi"], "greenfield");
+  writeToolsYaml(dir, PAIR_TOOLS);
   return dir;
 }
 
@@ -654,6 +665,7 @@ describe("generateAgentFiles in a repository composed of several packs", () => {
     tmp = mkdtempSync(join(tmpdir(), "eep-generate-multi-"));
     mkdirSync(join(tmp, COMPONENT_DIR), { recursive: true });
     vendorInto(tmp, corpus, [COMPONENT_PACK, ROOT_PACK], "greenfield");
+    writeToolsYaml(tmp, PAIR_TOOLS);
     generateAgentFiles(tmp);
   });
 
@@ -811,6 +823,7 @@ describe("generateAgentFiles into component agent files a repository already own
     writeFileSync(join(tmp, COMPONENT_DIR, "CLAUDE.md"), OWN_COMPONENT);
     writeFileSync(join(tmp, COMPONENT_DIR, "AGENTS.md"), OWN_COMPONENT_AGENTS);
     vendorInto(tmp, corpus, [COMPONENT_PACK, ROOT_PACK], "greenfield");
+    writeToolsYaml(tmp, PAIR_TOOLS);
     generateAgentFiles(tmp);
   });
 
@@ -875,6 +888,7 @@ describe("generateAgentFiles against the shipped five pack set", () => {
     tmp = mkdtempSync(join(tmpdir(), "eep-generate-corpus-five-"));
     for (const dir of COMPONENT_DIRS) mkdirSync(join(tmp, dir), { recursive: true });
     vendorInto(tmp, CORPUS, PACKS, "greenfield");
+    writeToolsYaml(tmp, PAIR_TOOLS);
     generateAgentFiles(tmp);
   });
 
@@ -905,5 +919,141 @@ describe("generateAgentFiles against the shipped five pack set", () => {
     expect(rows).toContain(
       "| repo root | containers-k8s | .eep/packs/platform/containers-k8s/STACK.md |",
     );
+  });
+});
+
+/**
+ * Selection driven generation: only the surfaces the chosen tools name are written, and each unchosen
+ * tool leaves nothing behind. The four root surfaces carry the identical body, so an agent reaching
+ * the repository through any chosen tool is held to the same instructions.
+ */
+describe("generateAgentFiles writes only the selected tool surfaces", () => {
+  const COPILOT = ".github/copilot-instructions.md";
+  const CURSOR = ".cursor/rules/eep.mdc";
+  const CURSOR_FRONTMATTER =
+    "---\ndescription: Engineering Excellence Program doctrine and golden paths\nalwaysApply: true\n---\n";
+
+  let tmp: string;
+
+  beforeEach(() => {
+    tmp = newVendoredTarget();
+  });
+
+  afterEach(() => {
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  const has = (relPath: string): boolean => existsSync(join(tmp, relPath));
+
+  it("writes only the Cursor rule for a cursor only selection", () => {
+    generateAgentFiles(tmp, ["cursor"]);
+
+    expect(has(CURSOR)).toBe(true);
+    expect(has("CLAUDE.md")).toBe(false);
+    expect(has("AGENTS.md")).toBe(false);
+    expect(has(COPILOT)).toBe(false);
+
+    const rule = readText(tmp, ".cursor", "rules", "eep.mdc");
+    expect(rule.startsWith(CURSOR_FRONTMATTER)).toBe(true);
+    expect(rule).toContain("alwaysApply: true");
+    // The instruction body sits below the frontmatter, the same body the block surfaces carry.
+    expect(rule).toContain("## The laws in force");
+    expect(rule).toContain("# python-fastapi golden path");
+    // No managed block markers: eep owns this file whole.
+    expect(rule).not.toContain(BLOCK_BEGIN_PREFIX);
+  });
+
+  it("writes CLAUDE.md and the Copilot file for a claude,copilot selection, and nothing else", () => {
+    generateAgentFiles(tmp, ["claude", "copilot"]);
+
+    expect(has("CLAUDE.md")).toBe(true);
+    expect(has(COPILOT)).toBe(true);
+    expect(has("AGENTS.md")).toBe(false);
+    expect(has(CURSOR)).toBe(false);
+
+    // Both co owned surfaces carry the identical generated block.
+    expect(blockOf(readText(tmp, "CLAUDE.md"))).toBe(blockOf(readText(tmp, COPILOT)));
+    expect(readText(tmp, COPILOT)).toContain("## The laws in force");
+  });
+
+  it("writes no agent instruction files at all for a none selection, keeping the vendored tree", () => {
+    generateAgentFiles(tmp, []);
+
+    for (const relPath of ["CLAUDE.md", "AGENTS.md", COPILOT, CURSOR]) {
+      expect(has(relPath), relPath).toBe(false);
+    }
+    // The gate's own configuration is untouched: only the agent surfaces are optional.
+    expect(has(".eep/lock.yaml")).toBe(true);
+  });
+
+  it("gives all four root surfaces the identical instruction body", () => {
+    generateAgentFiles(tmp, ["claude", "agents", "copilot", "cursor"]);
+
+    const claudeBlock = blockOf(readText(tmp, "CLAUDE.md"));
+    expect(blockOf(readText(tmp, "AGENTS.md"))).toBe(claudeBlock);
+    expect(blockOf(readText(tmp, COPILOT))).toBe(claudeBlock);
+    // The Cursor rule carries the same body inside it, minus the block markers it does not use.
+    const body = claudeBlock.split("\n").slice(2, -1).join("\n");
+    expect(readText(tmp, ".cursor", "rules", "eep.mdc")).toContain(body);
+  });
+
+  it("reads the selection from eep.yaml when none is passed", () => {
+    writeToolsYaml(tmp, ["copilot"]);
+
+    generateAgentFiles(tmp);
+
+    expect(has(COPILOT)).toBe(true);
+    expect(has("CLAUDE.md")).toBe(false);
+    expect(has("AGENTS.md")).toBe(false);
+    expect(has(CURSOR)).toBe(false);
+  });
+
+  it("regenerates a subset selection to the same bytes", () => {
+    generateAgentFiles(tmp, ["claude", "copilot", "cursor"]);
+    const before = [
+      readText(tmp, "CLAUDE.md"),
+      readText(tmp, COPILOT),
+      readText(tmp, ".cursor", "rules", "eep.mdc"),
+    ];
+
+    generateAgentFiles(tmp, ["claude", "copilot", "cursor"]);
+
+    expect([
+      readText(tmp, "CLAUDE.md"),
+      readText(tmp, COPILOT),
+      readText(tmp, ".cursor", "rules", "eep.mdc"),
+    ]).toEqual(before);
+  });
+
+  /**
+   * Deselecting a tool on a later run removes exactly what eep wrote for it and nothing a team wrote
+   * around it: the CLAUDE.md block is stripped while the prose above and below it stays byte for byte,
+   * and the newly selected Cursor rule appears.
+   */
+  it("strips a deselected tool's block while preserving user content, and writes the newly selected one", () => {
+    const preface = "# House rules\n\nDeploys go out on Thursdays.\n";
+    const epilogue = "\n## Local conventions\n\nRun make dev first.\n";
+    generateAgentFiles(tmp, ["claude"]);
+    const generated = readText(tmp, "CLAUDE.md");
+    writeFileSync(join(tmp, "CLAUDE.md"), `${preface}\n${generated}${epilogue}`);
+
+    generateAgentFiles(tmp, ["cursor"]);
+
+    const claude = readText(tmp, "CLAUDE.md");
+    // The bytes above and below the block are preserved; only eep's block is gone.
+    expect(claude.startsWith(preface)).toBe(true);
+    expect(claude).toContain("Run make dev first.");
+    expect(claude).not.toContain(BLOCK_BEGIN_PREFIX);
+    expect(existsSync(join(tmp, ".cursor", "rules", "eep.mdc"))).toBe(true);
+  });
+
+  it("deletes a wholly generated file for a deselected tool", () => {
+    generateAgentFiles(tmp, ["claude"]);
+    expect(has("CLAUDE.md")).toBe(true);
+
+    generateAgentFiles(tmp, ["agents"]);
+
+    expect(has("CLAUDE.md")).toBe(false);
+    expect(has("AGENTS.md")).toBe(true);
   });
 });

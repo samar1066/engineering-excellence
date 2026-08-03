@@ -311,9 +311,11 @@ describe("eep adopt on an existing application that has never seen eep", () => {
       corpusDir: CORPUS,
       profile: "evolving",
       yes: true,
+      tools: ["claude", "agents", "copilot", "cursor"],
     });
 
     expect(result.packs).toEqual(["python-fastapi"]);
+    expect(result.tools).toEqual(["claude", "copilot", "cursor", "agents"]);
 
     const agentsPath = join(adoptee, "AGENTS.md");
     expect(existsSync(agentsPath)).toBe(true);
@@ -335,6 +337,16 @@ describe("eep adopt on an existing application that has never seen eep", () => {
     // nothing else, which makes them byte identical as well as block identical. An agent reading
     // either name has to be held to exactly the same instructions.
     expect(readFileSync(join(adoptee, "CLAUDE.md"))).toEqual(readFileSync(agentsPath));
+
+    // All four selected surfaces landed, the two extra ones with the same block body and the Cursor
+    // rule with its frontmatter.
+    const copilot = readFileSync(join(adoptee, ".github", "copilot-instructions.md"), "utf8");
+    expect(copilot.startsWith(BLOCK_BEGIN)).toBe(true);
+    expect(copilot).toContain("| Law | Pack | Title | Severity | Check |");
+    const cursor = readFileSync(join(adoptee, ".cursor", "rules", "eep.mdc"), "utf8");
+    expect(cursor.startsWith("---\n")).toBe(true);
+    expect(cursor).toContain("alwaysApply: true");
+    expect(cursor).toContain("# python-fastapi golden path");
   });
 
   /**

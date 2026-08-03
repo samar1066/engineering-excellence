@@ -7,8 +7,14 @@ import { parse as parseYaml } from "yaml";
 import { installGitHook, plannedFiles, runAdopt } from "../src/commands/adopt.js";
 import { AUTHORITY_SENTENCE, BLOCK_BEGIN, BLOCK_END } from "../src/lib/managed-block.js";
 import { repoRoot } from "../src/lib/schema.js";
+import type { ToolToken } from "../src/lib/tools.js";
 
 const corpusDir = repoRoot();
+
+// The CLAUDE.md and AGENTS.md pair, the selection most of these fixtures adopt under so the co owned
+// block assertions below still hold. Fresh repos with no prior selection would otherwise resolve to
+// the AGENTS.md baseline alone.
+const PAIR: ToolToken[] = ["claude", "agents"];
 
 function newTargetDir(prefix: string): string {
   return mkdtempSync(join(tmpdir(), prefix));
@@ -46,9 +52,16 @@ describe("runAdopt", () => {
     await gitInit(targetDir);
     writeFastApiPyproject(targetDir);
 
-    const result = await runAdopt({ targetDir, corpusDir, profile: "evolving", yes: true });
+    const result = await runAdopt({
+      targetDir,
+      corpusDir,
+      profile: "evolving",
+      yes: true,
+      tools: PAIR,
+    });
 
     expect(result.packs).toEqual(["python-fastapi"]);
+    expect(result.tools).toEqual(PAIR);
     expect(existsSync(join(targetDir, ".eep", "lock.yaml"))).toBe(true);
     expect(existsSync(join(targetDir, "AGENTS.md"))).toBe(true);
     expect(existsSync(join(targetDir, "CLAUDE.md"))).toBe(true);
@@ -68,7 +81,13 @@ describe("runAdopt", () => {
     const targetDir = newTargetDir("eep-adopt-nogit-");
     writeFastApiPyproject(targetDir);
 
-    const result = await runAdopt({ targetDir, corpusDir, profile: "evolving", yes: true });
+    const result = await runAdopt({
+      targetDir,
+      corpusDir,
+      profile: "evolving",
+      yes: true,
+      tools: PAIR,
+    });
 
     expect(result.packs).toEqual(["python-fastapi"]);
     expect(existsSync(join(targetDir, ".eep", "lock.yaml"))).toBe(true);
@@ -83,7 +102,13 @@ describe("runAdopt", () => {
     writeFileSync(join(targetDir, ".git"), "gitdir: /elsewhere\n");
     writeFastApiPyproject(targetDir);
 
-    const result = await runAdopt({ targetDir, corpusDir, profile: "evolving", yes: true });
+    const result = await runAdopt({
+      targetDir,
+      corpusDir,
+      profile: "evolving",
+      yes: true,
+      tools: PAIR,
+    });
 
     expect(result.packs).toEqual(["python-fastapi"]);
     expect(existsSync(join(targetDir, ".eep", "lock.yaml"))).toBe(true);
@@ -104,14 +129,85 @@ describe("runAdopt", () => {
     ).rejects.toThrow(/no pack detected; supported packs: .*python-fastapi/);
   });
 
-  it("writes eep.yaml that parses to the profile and detected packs", async () => {
+  it("writes eep.yaml that parses to the profile, detected packs, and tool selection", async () => {
     const targetDir = newTargetDir("eep-adopt-yaml-");
     writeFastApiPyproject(targetDir);
 
-    await runAdopt({ targetDir, corpusDir, profile: "evolving", yes: true });
+    await runAdopt({ targetDir, corpusDir, profile: "evolving", yes: true, tools: PAIR });
 
     const parsed = parseYaml(readFileSync(join(targetDir, "eep.yaml"), "utf8"));
-    expect(parsed).toEqual({ profile: "evolving", packs: ["python-fastapi"] });
+    expect(parsed).toEqual({ profile: "evolving", packs: ["python-fastapi"], tools: PAIR });
+  });
+
+  // With no --tools and no prior selection, a fresh repository resolves to the AGENTS.md baseline: one
+  // universal instruction file rather than a spread of tool specific ones nobody asked for.
+  it("defaults a fresh repository to the AGENTS.md baseline", async () => {
+    const targetDir = newTargetDir("eep-adopt-default-tools-");
+    writeFastApiPyproject(targetDir);
+
+    const result = await runAdopt({ targetDir, corpusDir, profile: "evolving", yes: true });
+
+    expect(result.tools).toEqual(["agents"]);
+    expect(existsSync(join(targetDir, "AGENTS.md"))).toBe(true);
+    expect(existsSync(join(targetDir, "CLAUDE.md"))).toBe(false);
+    expect(existsSync(join(targetDir, ".github", "copilot-instructions.md"))).toBe(false);
+    expect(existsSync(join(targetDir, ".cursor", "rules", "eep.mdc"))).toBe(false);
+    const parsed = parseYaml(readFileSync(join(targetDir, "eep.yaml"), "utf8"));
+    expect(parsed.tools).toEqual(["agents"]);
+  });
+
+  // Auto detection: a repository that already carries a CLAUDE.md and a .cursor directory is a
+  // repository whose team uses those tools, so adopt generates for them without being told.
+  it("detects the tool selection from files the repository already carries", async () => {
+    const targetDir = newTargetDir("eep-adopt-detect-tools-");
+    writeFastApiPyproject(targetDir);
+    writeFileSync(join(targetDir, "CLAUDE.md"), "# House rules\n\nOurs.\n");
+    mkdirSync(join(targetDir, ".cursor", "rules"), { recursive: true });
+    writeFileSync(join(targetDir, ".cursor", "rules", "team.mdc"), "# Team rule\n");
+
+    const result = await runAdopt({ targetDir, corpusDir, profile: "evolving", yes: true });
+
+    expect(result.tools).toEqual(["claude", "cursor"]);
+    expect(existsSync(join(targetDir, ".cursor", "rules", "eep.mdc"))).toBe(true);
+    expect(existsSync(join(targetDir, "AGENTS.md"))).toBe(false);
+    // The team's own cursor rule is never touched.
+    expect(readFileSync(join(targetDir, ".cursor", "rules", "team.mdc"), "utf8")).toBe(
+      "# Team rule\n",
+    );
+  });
+
+  // An explicit --tools token that names no tool is refused before anything is written, the same way
+  // an unknown framework token is.
+  it("rejects an unknown tool token", async () => {
+    const targetDir = newTargetDir("eep-adopt-badtool-");
+    writeFastApiPyproject(targetDir);
+
+    await expect(
+      runAdopt({ targetDir, corpusDir, profile: "evolving", yes: true, tools: ["cobol"] }),
+    ).rejects.toThrow(/unknown tool: cobol/);
+  });
+
+  // The none selection writes no agent instruction files, but the gate and the vendored tree still
+  // land, so the repository is governed without any tool specific prose.
+  it("writes no agent instruction files for a none selection", async () => {
+    const targetDir = newTargetDir("eep-adopt-none-tools-");
+    writeFastApiPyproject(targetDir);
+
+    const result = await runAdopt({
+      targetDir,
+      corpusDir,
+      profile: "evolving",
+      yes: true,
+      tools: ["none"],
+    });
+
+    expect(result.tools).toEqual([]);
+    for (const relPath of ["AGENTS.md", "CLAUDE.md", ".github/copilot-instructions.md"]) {
+      expect(existsSync(join(targetDir, relPath)), relPath).toBe(false);
+    }
+    expect(existsSync(join(targetDir, ".cursor", "rules", "eep.mdc"))).toBe(false);
+    expect(existsSync(join(targetDir, ".eep", "lock.yaml"))).toBe(true);
+    expect(parseYaml(readFileSync(join(targetDir, "eep.yaml"), "utf8")).tools).toEqual([]);
   });
 
   it("refuses to run without --yes outside a TTY", async () => {
@@ -314,11 +410,11 @@ describe("installGitHook", () => {
 describe("plannedFiles wording for the files eep does not own", () => {
   const PACKS = ["python-fastapi"];
 
-  function planFor(seed: (dir: string) => void): string[] {
+  function planFor(seed: (dir: string) => void, tools: ToolToken[] = PAIR): string[] {
     const dir = newTargetDir("eep-plan-");
     writeFastApiPyproject(dir);
     seed(dir);
-    return plannedFiles(dir, corpusDir, PACKS);
+    return plannedFiles(dir, corpusDir, PACKS, tools);
   }
 
   function writeHook(dir: string, content: string): void {
@@ -419,8 +515,30 @@ describe("plannedFiles wording for the files eep does not own", () => {
     await gitInit(dir);
     await execa("git", ["config", "core.hooksPath", ".husky"], { cwd: dir });
 
-    expect(plannedFiles(dir, corpusDir, PACKS)).toContain(
+    expect(plannedFiles(dir, corpusDir, PACKS, PAIR)).toContain(
       "preserve hook manager (.husky); create .git/hooks/pre-commit-eep",
     );
+  });
+
+  // Only the selected surfaces appear, each with the wording its kind gets: the co owned files as a
+  // managed block line, the Cursor rule as a plain write since eep overwrites it whole.
+  it("lists only the surfaces the tool selection names", () => {
+    const plan = planFor(() => {}, ["copilot", "cursor"]);
+
+    expect(plan).toContain("create .github/copilot-instructions.md (managed block)");
+    expect(plan).toContain("write .cursor/rules/eep.mdc");
+    expect(plan.some((line) => line.includes("CLAUDE.md"))).toBe(false);
+    expect(plan.some((line) => line.includes("AGENTS.md"))).toBe(false);
+  });
+
+  // The none selection has to say plainly that no agent files are written, so a reader consenting to
+  // the plan is not left wondering where their instructions went.
+  it("documents that a none selection writes no agent instruction files", () => {
+    const plan = planFor(() => {}, []);
+
+    expect(plan).toContain("no agent instruction files (tools: none)");
+    expect(plan.some((line) => line.includes("CLAUDE.md"))).toBe(false);
+    expect(plan).toContain(".eep/");
+    expect(plan).toContain("eep.yaml");
   });
 });

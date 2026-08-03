@@ -16,9 +16,14 @@ import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { runInit } from "../src/commands/init.js";
 import { TIP_LINE } from "../src/lib/install-offer.js";
 import { repoRoot } from "../src/lib/schema.js";
+import type { ToolToken } from "../src/lib/tools.js";
 import { childPath } from "./helpers.js";
 
 const corpusDir = repoRoot();
+
+// The CLAUDE.md and AGENTS.md pair. A fresh init with no --tools resolves to the AGENTS.md baseline,
+// so tests that assert a CLAUDE.md, root or component, ask for the pair explicitly.
+const PAIR: ToolToken[] = ["claude", "agents"];
 
 function newTargetDir(prefix: string): string {
   return mkdtempSync(join(tmpdir(), prefix));
@@ -118,7 +123,7 @@ describe("runInit", () => {
   it("scaffolds a project: substitutes the name, commits it, and adopts it", async () => {
     const targetDir = newTargetDir("eep-init-e2e-");
 
-    await runInit({ name: "e2eproof", targetDir, corpusDir });
+    await runInit({ name: "e2eproof", targetDir, corpusDir, tools: PAIR });
 
     const projectDir = join(targetDir, "e2eproof");
     expect(existsSync(projectDir)).toBe(true);
@@ -179,7 +184,7 @@ describe("runInit", () => {
   it("commits the scaffold and then the governance, leaving a clean working tree", async () => {
     const targetDir = newTargetDir("eep-init-commits-");
 
-    await runInit({ name: "twocommits", targetDir, corpusDir, installOffer: false });
+    await runInit({ name: "twocommits", targetDir, corpusDir, installOffer: false, tools: PAIR });
 
     const projectDir = join(targetDir, "twocommits");
     expect(await gitSubjects(projectDir)).toEqual([
@@ -192,7 +197,8 @@ describe("runInit", () => {
     expect(committed).toContain("CLAUDE.md");
     expect(committed).toContain("AGENTS.md");
     expect(committed).toContain("eep.yaml");
-    // Exactly the generated artifacts: the second commit never sweeps up anything beside them.
+    // Exactly the generated artifacts for this selection: the second commit never sweeps up anything
+    // beside them, and the pair selection adds no copilot or cursor surface.
     for (const relPath of committed) {
       expect(
         relPath === "eep.yaml" ||
@@ -203,6 +209,28 @@ describe("runInit", () => {
       ).toBe(true);
     }
 
+    expect(await gitStatus(projectDir)).toBe("");
+  });
+
+  // The tool selection reaches the second commit: a project generated for copilot and cursor commits
+  // those surfaces too, and the working tree is still clean afterward.
+  it("commits the copilot and cursor surfaces when they are selected", async () => {
+    const targetDir = newTargetDir("eep-init-commits-tools-");
+
+    await runInit({
+      name: "toolscommit",
+      targetDir,
+      corpusDir,
+      installOffer: false,
+      tools: ["copilot", "cursor"],
+    });
+
+    const projectDir = join(targetDir, "toolscommit");
+    const committed = await gitHeadFiles(projectDir);
+    expect(committed).toContain(".github/copilot-instructions.md");
+    expect(committed).toContain(".cursor/rules/eep.mdc");
+    expect(committed).not.toContain("CLAUDE.md");
+    expect(committed).not.toContain("AGENTS.md");
     expect(await gitStatus(projectDir)).toBe("");
   });
 
@@ -562,6 +590,7 @@ describe("runInit composing several packs", () => {
       corpusDir: corpus,
       tokens: ["fastapi", FIXTURE_STACK_PACK],
       installOffer: false,
+      tools: PAIR,
     });
 
     const projectDir = join(targetDir, "shop");
@@ -588,6 +617,7 @@ describe("runInit composing several packs", () => {
       corpusDir: corpus,
       tokens: ["fastapi", FIXTURE_STACK_PACK],
       installOffer: false,
+      tools: PAIR,
     });
 
     const projectDir = join(targetDir, "shop");
@@ -633,6 +663,7 @@ describe("runInit composing several packs", () => {
       corpusDir: corpus,
       tokens: ["fastapi", FIXTURE_STACK_PACK],
       installOffer: false,
+      tools: PAIR,
     });
 
     const projectDir = join(targetDir, "shop");

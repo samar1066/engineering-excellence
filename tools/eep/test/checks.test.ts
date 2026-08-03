@@ -188,6 +188,18 @@ describe("runBuiltin secrets-scan", () => {
 
     expect(result.ok).toBe(true);
   });
+
+  // The style sweep exempts the Copilot file as prose, but the secrets scan must not: a credential
+  // planted in its user content is a repository wide fact and has to fail EEP-SEC-01 like any other.
+  it("still scans copilot-instructions.md for planted credentials", () => {
+    write(tmp, ".github/copilot-instructions.md", `# Copilot\n\nAWS_KEY = "${AWS_KEY}"\n`);
+
+    const result = runBuiltin("secrets-scan", tmp);
+
+    expect(result.ok).toBe(false);
+    expect(result.detail).toContain(".github/copilot-instructions.md");
+    expect(result.detail).toContain("aws-access-key-id");
+  });
 });
 
 describe("runBuiltin file-contains", () => {
@@ -376,6 +388,30 @@ describe("runBuiltin docs-style", () => {
     write(tmp, "docs/CLAUDE.MD", `# Docs rules\n\nKeep it short ${EM_DASH} always.\n`);
 
     expect(runBuiltin("docs-style .", tmp).ok).toBe(true);
+  });
+
+  /**
+   * The two extra tool surfaces are co owned or eep owned prose, not corpus governed documentation,
+   * so the style sweep exempts them too: a Copilot instructions file with an em dash in its user
+   * content, and any .mdc under a .cursor directory, must not turn adopting eep into a gate failure.
+   * Every other markdown file in the tree is still governed.
+   */
+  it("ignores copilot-instructions.md and Cursor rules while still flagging normal markdown", () => {
+    write(tmp, ".github/copilot-instructions.md", `# Copilot\n\nShip fast ${EM_DASH} and test.\n`);
+    write(
+      tmp,
+      ".cursor/rules/eep.mdc",
+      `---\nalwaysApply: true\n---\n\nDoctrine ${EM_DASH} here.\n`,
+    );
+    write(tmp, ".cursor/rules/team.mdc", `# Team ${EM_DASH} rule.\n`);
+
+    expect(runBuiltin("docs-style .", tmp).ok).toBe(true);
+
+    write(tmp, "docs/note.md", `# Note\n\nOne thing ${EM_DASH} then another.\n`);
+    const result = runBuiltin("docs-style .", tmp);
+    expect(result.ok).toBe(false);
+    expect(result.detail).toContain("docs/note.md");
+    expect(result.detail).not.toContain("copilot-instructions.md");
   });
 });
 

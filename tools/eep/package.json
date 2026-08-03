@@ -1,6 +1,6 @@
 {
   "name": "engineering-excellence",
-  "version": "0.3.4",
+  "version": "0.4.0",
   "description": "One command turns any repository into a place where AI coding agents build software the right way: doctrine, golden paths, generated agent instructions, and machine enforced gates for FastAPI, React, TypeScript, containers, AWS CDK, and GitHub Actions",
   "license": "Apache-2.0",
   "author": "Samar Swami (@samar1066)",
