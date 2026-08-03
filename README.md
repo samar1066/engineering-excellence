@@ -4,6 +4,7 @@
 [![ci](https://github.com/samar1066/engineering-excellence/actions/workflows/ci.yml/badge.svg)](https://github.com/samar1066/engineering-excellence/actions/workflows/ci.yml)
 [![npm provenance](https://img.shields.io/badge/provenance-signed-brightgreen)](https://www.npmjs.com/package/engineering-excellence)
 [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/samar1066/engineering-excellence/badge)](https://securityscorecards.dev/viewer/?uri=github.com/samar1066/engineering-excellence)
+[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/13939/badge)](https://www.bestpractices.dev/projects/13939)
 [![node](https://img.shields.io/node/v/engineering-excellence)](https://www.npmjs.com/package/engineering-excellence)
 [![downloads](https://img.shields.io/npm/dm/engineering-excellence)](https://www.npmjs.com/package/engineering-excellence)
 [![license](https://img.shields.io/npm/l/engineering-excellence)](LICENSE)
