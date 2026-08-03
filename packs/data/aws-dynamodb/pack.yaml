@@ -1,0 +1,125 @@
+name: aws-dynamodb
+kind: data
+version: 1.0.0
+tier: 1
+source: builtin
+detect:
+  - file: data/dynamodb.json
+requires: []
+provides: repository
+component_dir: data
+workdir: data
+implements:
+  - EEP-SEC-04
+  - EEP-REL-02
+  - EEP-COST-01
+  - EEP-ARCH-02
+declines:
+  - law: EEP-ARCH-01
+    reason: "Backend scoped law owned by the stack pack whose interface this repository sits behind; this pack adds one adapter behind that contract and carries no import graph of its own to point in a direction."
+  - law: EEP-TEST-01
+    reason: "Stack scoped law. The change gating suite belongs to the stack pack that owns the application; the suite this pack ships proves substitutability of one adapter, not the composed repository's coverage of every change."
+  - law: EEP-TEST-03
+    reason: "Stack scoped law. Public behavior coverage is measured over the application source the stack pack scaffolds; a table construct and a storage adapter expose no application behavior of their own to cover."
+  - law: EEP-SEC-01
+    reason: "Stack scoped law. This pack commits no credential material and adds no scanner; the DynamoDB client resolves its credentials from the deploy environment at run time."
+  - law: EEP-SEC-02
+    reason: "Backend scoped law about assembled query strings. DynamoDB is reached through the SDK's parameterized request objects rather than a string query, and the string query analyzer belongs to a relational backend pack."
+  - law: EEP-OBS-01
+    reason: "Backend scoped law. Structured logging is configured once in the service process the stack pack owns; this adapter emits through that pipeline rather than standing up a second one."
+  - law: EEP-OBS-02
+    reason: "Backend scoped law. Trace context is initialized in the service startup the stack pack owns; the SDK calls this adapter makes propagate inside that runtime rather than starting a span here."
+  - law: EEP-DLV-01
+    reason: "Delivery scoped law. Wiring the gate into automation belongs to the delivery pack that owns .github; this pack contributes checks the pipeline runs rather than the workflow that runs them."
+  - law: EEP-DLV-02
+    reason: "Stack scoped law. This scaffold ships committed lockfiles its own suites restore, while the composed repository's freshness gate belongs to each component's own package manager."
+  - law: EEP-DOCS-01
+    reason: "Docs scoped law. This pack ships bindings and a golden path rather than a governed docs tree; the frontmatter check for the composed repository belongs to the stack pack."
+  - law: EEP-DOCS-02
+    reason: "Docs scoped law already checked across the whole repository by the stack packs' style scan, which reaches this component's markdown too."
+  - law: EEP-DOCS-03
+    reason: "Corpus scoped law; consumer repositories are not required to index every directory."
+  - law: EEP-DEVX-01
+    reason: "Stack scoped law about the repository's one command entry point. The composed root Makefile and each component Makefile own that entry point; this pack installs adapters into those components rather than adding a third."
+toolchain:
+  language: { tool: "TypeScript strict", config: templates/config/tsconfig.json, rationale: "The table construct and the TypeScript adapter are strict mode TypeScript, the same configuration tsc --noEmit checks against." }
+  runtime: { tool: "python 3.11", rationale: "The Python adapter targets the floor the python-fastapi backend declares, so an older interpreter fails at install rather than at import." }
+  iac: { tool: "aws-cdk-lib v2", rationale: "One library defines the table construct the aws-cdk pack composes into its service stack, and its template assertions prove encryption, recovery, and tags with no AWS account involved." }
+  package_manager: { tool: npm, rationale: "Ships with Node, and npm ci restores the committed lockfile exactly for the TypeScript construct and adapter." }
+  formatter: { tool: "biome format", config: templates/config/biome.json, rationale: "One binary formats and lints the TypeScript sources, so the two can never disagree." }
+  linter: { tool: biome, config: templates/config/biome.json, rationale: "Replaces ESLint and Prettier in a single pass, with no plugin graph to maintain." }
+  type_checker: { tool: "tsc --noEmit", config: templates/config/tsconfig.json, rationale: "A misconfigured construct or adapter is a type error before it is a failed deployment." }
+  unit_test: { tool: "vitest with aws-cdk-lib assertions", rationale: "Synthesizes the table construct in process and asserts on the rendered template, so encryption, recovery, and tags are proven with no AWS account involved." }
+  integration_test: { tool: "pytest and vitest against DynamoDB Local", rationale: "The same repository contract suite runs against the in memory reference and the DynamoDB adapter pointed at a local container, which is the substitutability proof this pack exists to carry." }
+  declined:
+    - category: boundaries
+      reason: "This pack contributes one adapter behind an existing interface and no module graph of its own, so there is no import direction to enforce here."
+    - category: api_test
+      reason: "This component serves no API of its own; the API that reads through this repository is tested by the stack pack that builds it."
+    - category: e2e_test
+      reason: "End to end for a persisted feature means driving the running service that reads through this repository, which belongs to the composed application rather than this scaffold."
+    - category: coverage
+      reason: "A coverage percentage over a construct and an adapter measures nothing useful; the assertions name the table properties that matter and the contract suite names the behavior every implementation owes."
+    - category: mocking
+      reason: "The construct assertions synthesize the real construct and the contract suite runs against a real local DynamoDB, so there is nothing left to stand in for."
+    - category: logging
+      reason: "This adapter runs inside the service process and emits through the logging pipeline that process configures; it stands up none of its own."
+    - category: tracing
+      reason: "Trace context starts in the service this adapter runs inside; the SDK call it makes propagates an existing span rather than starting one."
+    - category: hooks
+      reason: "The scaffold ships no hook manager of its own: eep adopt installs the pre commit gate, and the contract suite is the loop before that."
+# How this pack's repository swaps into each composed backend, and how its table construct composes
+# into the infra stack. Read by the composed init wiring pass (tools/eep/src/lib/wiring.ts), which
+# runs only when this pack is composed with a target that is also in the set. Every from string below
+# is matched verbatim against the rendered file; a from that is not found is a hard error, never a
+# silent no op, so a wiring that would ship an app that looks persisted but is not fails the init.
+wiring:
+  targets:
+    python-fastapi:
+      copy:
+        - from: scaffold/wiring/python/dynamo_note_repository.py
+          to: app/infrastructure/repositories/dynamo_note_repository.py
+      patch:
+        - file: app/api/deps.py
+          replace:
+            - from: 'from app.infrastructure.repositories.memory_note_repository import MemoryNoteRepository'
+              to: 'from app.infrastructure.repositories.dynamo_note_repository import DynamoNoteRepository'
+            - from: 'MemoryNoteRepository()'
+              to: 'DynamoNoteRepository()'
+      dependency:
+        - file: pyproject.toml
+          add: 'aioboto3>=13.0.0'
+    typescript-node:
+      copy:
+        - from: scaffold/wiring/typescript/src/infrastructure/dynamo-note-repository.ts
+          to: src/infrastructure/dynamo-note-repository.ts
+      patch:
+        - file: src/app.ts
+          replace:
+            - from: 'import { MemoryNoteRepository } from "./infrastructure/memory-note-repository.js";'
+              to: 'import { DynamoNoteRepository } from "./infrastructure/dynamo-note-repository.js";'
+            - from: 'new MemoryNoteRepository()'
+              to: 'new DynamoNoteRepository()'
+      dependency:
+        - file: package.json
+          add:
+            - '@aws-sdk/client-dynamodb@^3.700.0'
+            - '@aws-sdk/lib-dynamodb@^3.700.0'
+  infra:
+    aws-cdk:
+      copy:
+        - from: scaffold/construct/note-table.ts
+          to: lib/note-table.ts
+      patch:
+        - file: lib/service-stack.ts
+          replace:
+            - from: '} from "./environments";'
+              to: "} from \"./environments\";\nimport { NoteTable } from \"./note-table\";"
+            - from: '    this.service = new ecsPatterns.ApplicationLoadBalancedFargateService(this, "Service", {'
+              to: "    const notes = new NoteTable(this, \"Notes\", {\n      owner: \"{{project_name}}\",\n      environment: config.stage,\n    });\n\n    this.service = new ecsPatterns.ApplicationLoadBalancedFargateService(this, \"Service\", {"
+            - from: '          IMAGE_TAG: imageTag,'
+              to: "          IMAGE_TAG: imageTag,\n          NOTES_TABLE_NAME: notes.table.tableName,"
+            - from: '    this.service.targetGroup.configureHealthCheck({'
+              to: "    // The Fargate task role reads and writes the note table it is handed the name of.\n    notes.table.grantReadWriteData(this.service.taskDefinition.taskRole);\n\n    this.service.targetGroup.configureHealthCheck({"
+authors: [{ name: Samar Swami, github: "@samar1066" }]
+maintainers: ["@samar1066"]

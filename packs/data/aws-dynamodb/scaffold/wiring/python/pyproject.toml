@@ -1,0 +1,30 @@
+[project]
+name = "aws-dynamodb-wiring"
+version = "0.1.0"
+description = "DynamoDB note repository adapter and its contract suite"
+requires-python = ">=3.11"
+dependencies = [
+  "aioboto3>=13.0.0",
+  "boto3>=1.34.0",
+  "pydantic>=2.0.0",
+]
+
+[project.optional-dependencies]
+test = [
+  "pytest>=8.0.0",
+  "pytest-asyncio>=0.24.0",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = ["dynamo_note_repository"]
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

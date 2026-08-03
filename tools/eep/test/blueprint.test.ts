@@ -19,10 +19,17 @@ import { repoRoot } from "../src/lib/schema.js";
 
 const corpusDir = repoRoot();
 
-// Wave 1 core, in declared order, is the pack set aws-fullstack composes today. Every one of these
-// already ships, which is what lets the blueprint compose and validate now; the future core packs
-// (aws-dynamodb, aws-cognito, aws-s3) are deliberately not here yet.
-const CORE = ["react", "python-fastapi", "aws-cdk", "containers-k8s", "github-actions"];
+// The core, in declared order, is the pack set aws-fullstack composes today. Every one of these
+// already ships, which is what lets the blueprint compose and validate now; aws-dynamodb joined in
+// the data pack wave, and the future core packs (aws-cognito, aws-s3) are deliberately not here yet.
+const CORE = [
+  "react",
+  "python-fastapi",
+  "aws-dynamodb",
+  "aws-cdk",
+  "containers-k8s",
+  "github-actions",
+];
 const SLICE_PACKS = [
   "aws-messaging",
   "aws-opensearch",
@@ -125,7 +132,7 @@ describe("listBlueprints and availability", () => {
 });
 
 describe("expandBlueprint", () => {
-  it("returns the five core packs with no slices", () => {
+  it("returns the six core packs with no slices", () => {
     expect(expandBlueprint("aws-fullstack", [], corpusDir).packs).toEqual(CORE);
   });
 

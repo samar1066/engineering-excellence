@@ -1,6 +1,7 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { execa } from "execa";
 import { describe, expect, it, vi } from "vitest";
 import { parse as parseYaml } from "yaml";
 import { runInit } from "../src/commands/init.js";
@@ -8,11 +9,19 @@ import { repoRoot } from "../src/lib/schema.js";
 
 const corpusDir = repoRoot();
 
-// The wave 1 core aws-fullstack composes, as pack names. react and python-fastapi are the two stack
-// components; aws-cdk claims the infra component; containers-k8s and github-actions contribute at the
-// repository root. Sorted, because the lock records packs in sorted order.
-const CORE = ["aws-cdk", "containers-k8s", "github-actions", "python-fastapi", "react"];
-const COMPONENT_DIRS = ["backend", "frontend", "infra"];
+// The core aws-fullstack composes, as pack names. react and python-fastapi are the two stack
+// components; aws-dynamodb claims the data component; aws-cdk claims the infra component;
+// containers-k8s and github-actions contribute at the repository root. Sorted, because the lock
+// records packs in sorted order.
+const CORE = [
+  "aws-cdk",
+  "aws-dynamodb",
+  "containers-k8s",
+  "github-actions",
+  "python-fastapi",
+  "react",
+];
+const COMPONENT_DIRS = ["backend", "data", "frontend", "infra"];
 
 const COMPOSE_TIMEOUT = 120_000;
 
@@ -41,7 +50,7 @@ async function captureLog(fn: () => Promise<void>): Promise<string> {
 
 describe("init with a blueprint token", () => {
   it(
-    "composes aws-fullstack into the five core component set",
+    "composes aws-fullstack into the six core component set",
     async () => {
       const targetDir = newTargetDir("eep-blueprint-compose-");
       try {
@@ -55,7 +64,7 @@ describe("init with a blueprint token", () => {
 
         const projectDir = join(targetDir, "shop");
 
-        // The lock is the proof of what actually composed: exactly the five wave 1 core packs.
+        // The lock is the proof of what actually composed: exactly the six core packs.
         expect(lockPackNames(projectDir)).toEqual(CORE);
 
         // One component directory per stack and platform pack that claims one; the root packs
@@ -126,4 +135,71 @@ describe("init with a blueprint token", () => {
       rmSync(targetDir, { recursive: true, force: true });
     }
   });
+
+  it(
+    "wires the DynamoDB repository into the backend and the table into the infra stack",
+    async () => {
+      const targetDir = newTargetDir("eep-blueprint-wiring-");
+      try {
+        await runInit({
+          name: "shop",
+          targetDir,
+          corpusDir,
+          tokens: ["aws-fullstack"],
+          installOffer: false,
+        });
+
+        const projectDir = join(targetDir, "shop");
+
+        // The backend's composition root now constructs the DynamoDB repository behind the unchanged
+        // interface, and the adapter file dropped in beside the in memory one.
+        const deps = readFileSync(join(projectDir, "backend", "app", "api", "deps.py"), "utf8");
+        expect(deps).toContain(
+          "from app.infrastructure.repositories.dynamo_note_repository import DynamoNoteRepository",
+        );
+        expect(deps).toContain("DynamoNoteRepository()");
+        expect(deps).not.toContain("MemoryNoteRepository");
+        expect(
+          existsSync(
+            join(
+              projectDir,
+              "backend",
+              "app",
+              "infrastructure",
+              "repositories",
+              "dynamo_note_repository.py",
+            ),
+          ),
+        ).toBe(true);
+        expect(readFileSync(join(projectDir, "backend", "pyproject.toml"), "utf8")).toContain(
+          '"aioboto3>=13.0.0",',
+        );
+
+        // None of the pack's contract-suite fixture tree leaked into the real backend.
+        expect(existsSync(join(projectDir, "backend", "conftest.py"))).toBe(false);
+        expect(existsSync(join(projectDir, "backend", "wiring"))).toBe(false);
+
+        // The infra stack instantiates the table, hands its name to the service, and grants the
+        // task role access, with the construct copied beside the stack.
+        expect(existsSync(join(projectDir, "infra", "lib", "note-table.ts"))).toBe(true);
+        const stack = readFileSync(join(projectDir, "infra", "lib", "service-stack.ts"), "utf8");
+        expect(stack).toContain('import { NoteTable } from "./note-table";');
+        expect(stack).toContain('const notes = new NoteTable(this, "Notes", {');
+        expect(stack).toContain("NOTES_TABLE_NAME: notes.table.tableName,");
+        expect(stack).toContain(
+          "notes.table.grantReadWriteData(this.service.taskDefinition.taskRole);",
+        );
+        // The owner tag carries the project name the wiring pass substituted.
+        expect(stack).toContain('owner: "shop",');
+
+        // The whole point of running the pass before the scaffold commit: the swap is committed, not
+        // left as an untracked edit beside a governed repository.
+        const status = await execa("git", ["status", "--porcelain"], { cwd: projectDir });
+        expect(status.stdout.trim()).toBe("");
+      } finally {
+        rmSync(targetDir, { recursive: true, force: true });
+      }
+    },
+    COMPOSE_TIMEOUT,
+  );
 });

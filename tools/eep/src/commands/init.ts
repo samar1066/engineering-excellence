@@ -18,6 +18,7 @@ import { offerGlobalInstall } from "../lib/install-offer.js";
 import { findPackDir, loadPack } from "../lib/pack.js";
 import type { ToolToken } from "../lib/tools.js";
 import { vendorInto } from "../lib/vendor.js";
+import { applyComposedWiring } from "../lib/wiring.js";
 import {
   buildEepYamlContent,
   installGitHook,
@@ -814,6 +815,24 @@ async function materializeComposed(
       mkdirSync(dirname(dependabotPath), { recursive: true });
       writeFileSync(dependabotPath, dependabot);
     }
+  }
+
+  // Data driven wiring: a composed data pack that provides a repository swaps each composed target
+  // backend's in memory implementation for its own, behind the unchanged interface, and composes its
+  // table construct into the infra stack (see lib/wiring.ts). It runs over the rendered tree here,
+  // after every scaffold and every generated root file is final and before the scaffold commit, so
+  // the swap is committed with the scaffold rather than left behind as an untracked edit. A single
+  // pack (non composed) init never reaches this path, so it never triggers wiring.
+  const wiring = applyComposedWiring({
+    projectDir,
+    corpusDir: opts.corpusDir,
+    name: opts.name,
+    placements: plan.placements,
+  });
+  if (wiring.providers.length > 0) {
+    console.log(
+      `eep init: wired ${wiring.providers.join(", ")} into the composed backend and infra`,
+    );
   }
 
   await gitInitAndCommit(projectDir, composedCommitMessage(plan.packs));

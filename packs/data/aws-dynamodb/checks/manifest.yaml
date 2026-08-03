@@ -1,0 +1,17 @@
+checks:
+  - law: EEP-SEC-04
+    kind: shell
+    command: 'npm run test:construct -- -t "encrypts the table at rest"'
+    proves: "The synthesized table sets server side encryption on, asserted against the rendered CloudFormation template with no AWS account involved."
+  - law: EEP-REL-02
+    kind: shell
+    command: 'npm run test:construct -- -t "keeps point in time recovery"'
+    proves: "The synthesized table enables point in time recovery, the continuous backup that fixes the recovery point, asserted against the rendered template."
+  - law: EEP-COST-01
+    kind: shell
+    command: 'npm run test:construct -- -t "tags the table with an owner and an environment"'
+    proves: "The synthesized table carries owner and environment tags, asserted against the rendered template, so the resource is attributable in a cost report."
+  - law: EEP-ARCH-02
+    kind: shell
+    command: "bash scripts/contract-suite.sh"
+    proves: "The one repository contract suite runs against both the in memory reference and the DynamoDB adapter pointed at DynamoDB Local, in Python and in TypeScript, and passes against every implementation."

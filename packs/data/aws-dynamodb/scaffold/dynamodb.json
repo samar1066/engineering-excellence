@@ -1,0 +1,6 @@
+{
+  "tableNameEnv": "NOTES_TABLE_NAME",
+  "endpointUrlEnv": "DYNAMODB_ENDPOINT_URL",
+  "partitionKey": "id",
+  "billingMode": "PAY_PER_REQUEST"
+}

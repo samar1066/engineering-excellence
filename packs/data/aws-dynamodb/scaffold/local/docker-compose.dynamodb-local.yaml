@@ -1,0 +1,22 @@
+# DynamoDB Local for the offline contract suite. The image is pinned by sha256 digest, the same way
+# the containers pack pins its base images, so the local store a developer runs the substitutability
+# proof against is byte identical to the one continuous integration runs it against, and a moved tag
+# can never change what the proof ran on.
+#
+# Bring it up:   docker compose -f local/docker-compose.dynamodb-local.yaml up -d --wait
+# Tear it down:  docker compose -f local/docker-compose.dynamodb-local.yaml down
+#
+# scripts/contract-suite.sh brings this up, runs the contract suite against both implementations in
+# both languages, and tears it down, so the endpoint below is what the adapters point at when there
+# is no real AWS account in the loop.
+name: "{{project_name}}-dynamodb-local"
+
+services:
+  dynamodb-local:
+    image: amazon/dynamodb-local:latest@sha256:ff89bd48ff32cd8d9be5fee8873b65b8854dc408f1afe881be6eb00247bc0dab
+    # The image entrypoint is java; these arguments run the store entirely in RAM, so every run
+    # starts from an empty table and nothing persists to disk between runs of the suite.
+    command: ["-jar", "DynamoDBLocal.jar", "-inMemory", "-port", "8000"]
+    ports:
+      - "8000:8000"
+    restart: unless-stopped

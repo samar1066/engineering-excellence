@@ -6,7 +6,7 @@
   "required": ["name", "kind", "version", "tier", "source", "detect", "implements", "toolchain", "authors", "maintainers"],
   "properties": {
     "name": { "type": "string", "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$" },
-    "kind": { "enum": ["stack", "platform", "delivery"] },
+    "kind": { "enum": ["stack", "platform", "delivery", "data"] },
     "version": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$" },
     "tier": { "enum": [1, 2] },
     "source": { "enum": ["builtin"] },
@@ -15,6 +15,7 @@
       "properties": { "file": { "type": "string" }, "contains": { "type": "string" } },
       "additionalProperties": false } },
     "requires": { "type": "array", "items": { "type": "string" } },
+    "provides": { "enum": ["repository"] },
     "component_dir": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" },
     "workdir": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" },
     "implements": { "type": "array", "minItems": 1, "items": { "type": "string", "pattern": "^EEP-" } },
@@ -22,6 +23,7 @@
       "type": "object", "required": ["law", "reason"],
       "properties": { "law": { "type": "string", "pattern": "^EEP-" }, "reason": { "type": "string", "minLength": 10 } } } },
     "toolchain": { "$ref": "./toolchain.schema.json" },
+    "wiring": { "type": "object" },
     "authors": { "type": "array", "minItems": 1, "items": {
       "type": "object", "required": ["name", "github"],
       "properties": { "name": { "type": "string" }, "github": { "type": "string", "pattern": "^@" } } } },

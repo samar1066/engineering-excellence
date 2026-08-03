@@ -40,3 +40,12 @@ name = "Domain never imports infrastructure"
 type = "forbidden"
 source_modules = ["app.domain"]
 forbidden_modules = ["app.infrastructure", "app.api"]
+
+[tool.coverage.run]
+# Repository adapters that reach an external data store (dynamo_*_repository.py, and any other store
+# added the same way) are proven by their data pack's contract suite against a local store, run in
+# CI with a container (EEP-ARCH-02), not by these fast unit tests, so they are excluded from the
+# coverage measurement. The in memory reference implementation stays measured. This keeps the gate
+# honest and lets a project add a second or an Nth persisted resource without the uncovered store
+# adapters sinking the total.
+omit = ["*/repositories/dynamo_*_repository.py"]
