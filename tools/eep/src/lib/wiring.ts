@@ -208,6 +208,50 @@ function subst(text: string, name: string): string {
   return text.replaceAll(PROJECT_NAME_TOKEN, name);
 }
 
+// A single line ES import (`import ... from "path";`). A multi line import, whose opening `import {`
+// line carries no `from "..."`, does not match, so it bounds a run rather than being reordered.
+const SINGLE_LINE_IMPORT = /^import\s.*\sfrom\s+["']([^"']+)["'];?\s*$/;
+
+function importSpecifier(line: string): string | null {
+  return line.match(SINGLE_LINE_IMPORT)?.[1] ?? null;
+}
+
+// Package and builtin imports sort before relative ones, matching biome's organizeImports grouping.
+function importGroup(specifier: string): number {
+  return specifier.startsWith(".") ? 1 : 0;
+}
+
+// Re-sorts each contiguous run of single line import statements by group then module specifier, which
+// is the order biome's organizeImports produces. The composed wiring injects single line imports from
+// several packs after one fixed anchor, so their combined order is not sorted, and a swapped adapter
+// import lands out of place; without this the composed component fails its own `biome check`.
+// Formatters are not installed at init time, so the sort is done here rather than by running biome.
+// Verified against `biome check` on the composed infra. A multi line import bounds a run and is never
+// moved, which is safe because the wiring only ever injects single line imports.
+function sortTsImportRuns(content: string): string {
+  const lines = content.split("\n");
+  let i = 0;
+  while (i < lines.length) {
+    if (importSpecifier(lines[i] ?? "") === null) {
+      i += 1;
+      continue;
+    }
+    let end = i;
+    while (end < lines.length && importSpecifier(lines[end] ?? "") !== null) end += 1;
+    const run = lines.slice(i, end);
+    run.sort((a, b) => {
+      const sa = importSpecifier(a) ?? "";
+      const sb = importSpecifier(b) ?? "";
+      const groups = importGroup(sa) - importGroup(sb);
+      if (groups !== 0) return groups;
+      return sa < sb ? -1 : sa > sb ? 1 : 0;
+    });
+    lines.splice(i, end - i, ...run);
+    i = end;
+  }
+  return lines.join("\n");
+}
+
 function applyRecipe(args: {
   recipe: Recipe;
   sourcePackDir: string;
@@ -250,7 +294,10 @@ function applyRecipe(args: {
       }
       content = content.replaceAll(rule.from, subst(rule.to, name));
     }
-    writeFileSync(filePath, content);
+    // A .ts/.tsx target may have gained single line imports from several providers after one anchor,
+    // or had an adapter import swapped out of order; re-sort so it passes its own biome check.
+    const written = /\.tsx?$/.test(patch.file) ? sortTsImportRuns(content) : content;
+    writeFileSync(filePath, written);
     summary.patched.push(join(componentDir, patch.file));
   }
 

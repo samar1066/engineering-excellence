@@ -1,0 +1,97 @@
+name: aws-s3
+kind: platform
+version: 1.0.0
+tier: 1
+source: builtin
+detect:
+  - file: storage/s3.json
+requires: []
+provides: storage
+component_dir: storage
+workdir: storage
+implements:
+  - EEP-SEC-04
+  - EEP-SEC-03
+  - EEP-COST-01
+declines:
+  - law: EEP-ARCH-01
+    reason: "Backend scoped law owned by the stack pack whose application these resources sit beside; this pack ships CDK constructs with no application import graph of their own to point in a direction."
+  - law: EEP-TEST-01
+    reason: "Stack scoped law. The change gating suite belongs to the stack pack that owns the application; the suite this pack ships proves its bucket and its distribution, not the composed application's coverage of every change."
+  - law: EEP-TEST-03
+    reason: "Stack scoped law. Public behavior coverage is measured over the application source the stack pack scaffolds; a bucket and a distribution expose no application behavior of their own to cover."
+  - law: EEP-SEC-01
+    reason: "Stack scoped law. This pack commits no credential material and adds no scanner; the bucket names and the distribution domain resolve from the deploy environment at run time, and the private bucket holds no static secret to leak."
+  - law: EEP-SEC-02
+    reason: "Backend scoped law about assembled query strings. Object storage is reached through the SDK's parameterized request objects rather than a string query, and the string query analyzer belongs to a relational backend pack."
+  - law: EEP-OBS-01
+    reason: "Backend scoped law. Structured logging is configured once in the service process the stack pack owns; these resources are reached through that process rather than standing up a second logging pipeline."
+  - law: EEP-OBS-02
+    reason: "Backend scoped law. Trace context is initialized in the service startup the stack pack owns; the SDK calls that reach this bucket propagate inside that runtime rather than starting a span here."
+  - law: EEP-DLV-01
+    reason: "Delivery scoped law. Wiring the gate into automation belongs to the delivery pack that owns .github; this pack contributes checks the pipeline runs rather than the workflow that runs them."
+  - law: EEP-DLV-02
+    reason: "Stack scoped law. This scaffold ships a committed lockfile its own suite restores, while the composed repository's freshness gate belongs to each component's own package manager."
+  - law: EEP-DOCS-01
+    reason: "Docs scoped law. This pack ships bindings and a golden path rather than a governed docs tree; the frontmatter check for the composed repository belongs to the stack pack."
+  - law: EEP-DOCS-02
+    reason: "Docs scoped law already checked across the whole repository by the stack packs' style scan, which reaches this component's markdown too."
+  - law: EEP-DOCS-03
+    reason: "Corpus scoped law; consumer repositories are not required to index every directory."
+  - law: EEP-DEVX-01
+    reason: "Stack scoped law about the repository's one command entry point. The composed root Makefile and each component Makefile own that entry point; this pack composes its constructs into the infra stack rather than adding a third."
+toolchain:
+  language: { tool: "TypeScript strict", config: templates/config/tsconfig.json, rationale: "The frontend hosting and uploads bucket constructs are strict mode TypeScript, the same configuration tsc --noEmit checks against." }
+  iac: { tool: "aws-cdk-lib v2", rationale: "One library defines the two constructs the aws-cdk pack composes into its service stack, and its template assertions prove the private encrypted buckets, the origin access control, the HTTPS only edge, the single page error mapping, and the tags with no AWS account involved." }
+  package_manager: { tool: npm, rationale: "Ships with Node, and npm ci restores the committed lockfile exactly for the TypeScript constructs." }
+  formatter: { tool: "biome format", config: templates/config/biome.json, rationale: "One binary formats and lints the TypeScript sources, so the two can never disagree." }
+  linter: { tool: biome, config: templates/config/biome.json, rationale: "Replaces ESLint and Prettier in a single pass, with no plugin graph to maintain." }
+  type_checker: { tool: "tsc --noEmit", config: templates/config/tsconfig.json, rationale: "A misconfigured construct is a type error before it is a failed deployment." }
+  unit_test: { tool: "vitest with aws-cdk-lib assertions", rationale: "Synthesizes both constructs in process and asserts on the rendered template, so the private encrypted buckets, the origin access control and scoped bucket policy, the HTTPS only edge, the single page error mapping, and the tags are proven with no AWS account involved." }
+  declined:
+    - category: integration_test
+      reason: "The integration this pack would own is a real upload to a deployed bucket and a real fetch through a live distribution, which needs an account; the constructs are proven instead by template assertions that render the same resources offline."
+    - category: boundaries
+      reason: "This pack contributes two constructs with no module graph of their own, so there is no import direction to enforce here."
+    - category: api_test
+      reason: "This component serves no API of its own; the API that writes to this bucket is tested by the stack pack that builds it."
+    - category: e2e_test
+      reason: "End to end for storage and an edge means uploading through the running service and fetching the served site over the internet, which belongs to the composed application rather than this scaffold."
+    - category: coverage
+      reason: "A coverage percentage over two constructs measures nothing useful; the assertions name the bucket, distribution, and tag properties that matter."
+    - category: mocking
+      reason: "The construct assertions synthesize the real constructs and read the rendered template, so there is nothing left to stand in for."
+    - category: logging
+      reason: "These resources are reached from inside the service process, which configures its own logging pipeline; this pack stands up none of its own."
+    - category: tracing
+      reason: "Trace context starts in the service that reaches this bucket; the SDK call it makes propagates an existing span rather than starting one."
+    - category: hooks
+      reason: "The scaffold ships no hook manager of its own: eep adopt installs the pre commit gate, and the construct suite is the loop before that."
+# How this pack's storage and edge constructs compose into the infra stack. Read by the composed init
+# wiring pass (tools/eep/src/lib/wiring.ts), which runs only when this pack is composed with a target
+# that is also in the set. Every from string below is matched verbatim against the rendered file; a
+# from that is not found is a hard error, never a silent no op, so a wiring that would ship an app
+# that looks served and stored but is not fails the init.
+wiring:
+  infra:
+    aws-cdk:
+      copy:
+        - from: scaffold/construct/frontend-hosting.ts
+          to: lib/frontend-hosting.ts
+        - from: scaffold/construct/uploads-bucket.ts
+          to: lib/uploads-bucket.ts
+      patch:
+        - file: lib/service-stack.ts
+          replace:
+            - from: '} from "./environments";'
+              to: "} from \"./environments\";\nimport { FrontendHosting } from \"./frontend-hosting\";\nimport { UploadsBucket } from \"./uploads-bucket\";"
+            - from: '    this.service = new ecsPatterns.ApplicationLoadBalancedFargateService(this, "Service", {'
+              to: "    const uploads = new UploadsBucket(this, \"Uploads\", {\n      owner: \"{{project_name}}\",\n      environment: config.stage,\n    });\n\n    const frontend = new FrontendHosting(this, \"Frontend\", {\n      owner: \"{{project_name}}\",\n      environment: config.stage,\n      sitePath: \"../frontend/dist\",\n    });\n\n    this.service = new ecsPatterns.ApplicationLoadBalancedFargateService(this, \"Service\", {"
+            - from: '          IMAGE_TAG: imageTag,'
+              to: "          IMAGE_TAG: imageTag,\n          UPLOADS_BUCKET_NAME: uploads.bucket.bucketName,"
+            - from: '    this.service.targetGroup.configureHealthCheck({'
+              to: "    // The Fargate task role reads and writes the uploads bucket it is handed the name of.\n    uploads.bucket.grantReadWrite(this.service.taskDefinition.taskRole);\n\n    this.service.targetGroup.configureHealthCheck({"
+            - from: '    new CfnOutput(this, "ServiceUrl", {'
+              to: "    new CfnOutput(this, \"SiteUrl\", {\n      value: `https://${frontend.distribution.distributionDomainName}`,\n      description: \"Public HTTPS URL of the CloudFront distribution serving the frontend\",\n    });\n\n    new CfnOutput(this, \"ServiceUrl\", {"
+authors: [{ name: Samar Swami, github: "@samar1066" }]
+maintainers: ["@samar1066"]

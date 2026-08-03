@@ -17,6 +17,7 @@ core:
   - python-fastapi
   - aws-dynamodb
   - aws-cognito
+  - aws-s3
   - aws-cdk
   - containers-k8s
   - github-actions

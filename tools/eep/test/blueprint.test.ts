@@ -21,12 +21,13 @@ const corpusDir = repoRoot();
 
 // The core, in declared order, is the pack set aws-fullstack composes today. Every one of these
 // already ships, which is what lets the blueprint compose and validate now; aws-dynamodb joined in
-// the data pack wave and aws-cognito in the auth wave; the future core pack aws-s3 is not here yet.
+// the data wave, aws-cognito in the auth wave, and aws-s3 in the storage wave; the core is complete.
 const CORE = [
   "react",
   "python-fastapi",
   "aws-dynamodb",
   "aws-cognito",
+  "aws-s3",
   "aws-cdk",
   "containers-k8s",
   "github-actions",
@@ -133,7 +134,7 @@ describe("listBlueprints and availability", () => {
 });
 
 describe("expandBlueprint", () => {
-  it("returns the seven core packs with no slices", () => {
+  it("returns the eight core packs with no slices", () => {
     expect(expandBlueprint("aws-fullstack", [], corpusDir).packs).toEqual(CORE);
   });
 

@@ -1,0 +1,6 @@
+{
+  "uploadsBucketEnv": "UPLOADS_BUCKET_NAME",
+  "frontendComponentDir": "frontend",
+  "frontendBuildDir": "dist",
+  "spaEntrypoint": "index.html"
+}

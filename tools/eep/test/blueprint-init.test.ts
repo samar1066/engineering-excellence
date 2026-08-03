@@ -10,19 +10,20 @@ import { repoRoot } from "../src/lib/schema.js";
 const corpusDir = repoRoot();
 
 // The core aws-fullstack composes, as pack names. react and python-fastapi are the two stack
-// components; aws-dynamodb claims the data component; aws-cognito claims the auth component; aws-cdk
-// claims the infra component; containers-k8s and github-actions contribute at the repository root.
-// Sorted, because the lock records packs in sorted order.
+// components; aws-dynamodb claims the data component; aws-cognito claims the auth component; aws-s3
+// claims the storage component; aws-cdk claims the infra component; containers-k8s and github-actions
+// contribute at the repository root. Sorted, because the lock records packs in sorted order.
 const CORE = [
   "aws-cdk",
   "aws-cognito",
   "aws-dynamodb",
+  "aws-s3",
   "containers-k8s",
   "github-actions",
   "python-fastapi",
   "react",
 ];
-const COMPONENT_DIRS = ["auth", "backend", "data", "frontend", "infra"];
+const COMPONENT_DIRS = ["auth", "backend", "data", "frontend", "infra", "storage"];
 
 const COMPOSE_TIMEOUT = 120_000;
 
@@ -51,7 +52,7 @@ async function captureLog(fn: () => Promise<void>): Promise<string> {
 
 describe("init with a blueprint token", () => {
   it(
-    "composes aws-fullstack into the seven core component set",
+    "composes aws-fullstack into the eight core component set",
     async () => {
       const targetDir = newTargetDir("eep-blueprint-compose-");
       try {
@@ -65,7 +66,7 @@ describe("init with a blueprint token", () => {
 
         const projectDir = join(targetDir, "shop");
 
-        // The lock is the proof of what actually composed: exactly the seven core packs.
+        // The lock is the proof of what actually composed: exactly the eight core packs.
         expect(lockPackNames(projectDir)).toEqual(CORE);
 
         // One component directory per stack and platform pack that claims one; the root packs

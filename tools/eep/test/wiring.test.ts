@@ -273,7 +273,7 @@ describe("applyComposedWiring", () => {
     expect(summary.providers).toContain("aws-cognito");
   });
 
-  it("applies both the repository swap and the auth guard when a data and an auth pack compose", () => {
+  it("applies repository, auth, and storage recipes with sorted infra imports when all compose", () => {
     const projectDir = newProject(["backend", "infra"]);
     const summary = applyComposedWiring({
       projectDir,
@@ -282,6 +282,7 @@ describe("applyComposedWiring", () => {
       placements: [
         { pack: "aws-cognito", componentDir: "auth" },
         { pack: "aws-dynamodb", componentDir: "data" },
+        { pack: "aws-s3", componentDir: "storage" },
         { pack: "python-fastapi", componentDir: "backend" },
         { pack: "aws-cdk", componentDir: "infra" },
       ],
@@ -295,11 +296,14 @@ describe("applyComposedWiring", () => {
     expect(summary.providers).toContain("aws-dynamodb");
     expect(summary.providers).toContain("aws-cognito");
 
-    // Both constructs compose into the one infra stack. Their injected import order is asserted by the
-    // live composed biome check rather than here; this guards that both landed and neither clobbered.
+    // All the infra recipes inject imports after one anchor; the wiring re-sorts them so the composed
+    // infra passes biome's organizeImports, landing alphabetically by module path.
     const stack = read(projectDir, "infra/lib/service-stack.ts");
-    expect(stack).toContain('import { NoteTable } from "./note-table";');
-    expect(stack).toContain('import { UserPool } from "./user-pool";');
-    expect(stack).toContain('const notes = new NoteTable(this, "Notes", {');
+    const order = ["./frontend-hosting", "./note-table", "./uploads-bucket", "./user-pool"].map(
+      (path) => stack.indexOf(`from "${path}"`),
+    );
+    expect(order.every((idx) => idx >= 0)).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+    expect(summary.providers).toContain("aws-s3");
   });
 });

@@ -1,0 +1,17 @@
+checks:
+  - law: EEP-SEC-04
+    kind: shell
+    command: 'npm run test:construct -- -t "encrypts objects at rest and rejects plaintext transport"'
+    proves: "The synthesized uploads bucket sets server side encryption on and carries a bucket policy that denies any request not made over TLS, asserted against the rendered CloudFormation template with no AWS account involved, so objects are ciphertext at rest and every hop to them is encrypted."
+  - law: EEP-SEC-04
+    kind: shell
+    command: 'npm run test:construct -- -t "serves the site only over HTTPS"'
+    proves: "The synthesized distribution redirects every viewer to HTTPS, asserted against the rendered template, so the served frontend never leaves the edge in the clear and the in transit guarantee holds at the public hop too."
+  - law: EEP-SEC-03
+    kind: shell
+    command: 'npm run test:construct -- -t "restricts bucket reads to the distribution through an origin access control"'
+    proves: "The synthesized site bucket is reachable only by this one distribution: an origin access control signs the origin request and the bucket policy allows s3:GetObject to the CloudFront service principal scoped by source ARN, asserted against the rendered template, so the private bucket carries no public path and no access it does not use."
+  - law: EEP-COST-01
+    kind: shell
+    command: 'npm run test:construct -- -t "tags the uploads bucket with an owner and an environment"'
+    proves: "The synthesized uploads bucket carries owner and environment tags, asserted against the rendered template, so the resource is attributable in a cost report."
