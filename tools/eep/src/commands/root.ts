@@ -2,6 +2,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Command } from "commander";
 import { parse as parseYaml } from "yaml";
+import { resolveBlueprintSelection, slicesFromFlag } from "../lib/blueprint.js";
 import { corpusRoot } from "../lib/corpus-root.js";
 import { detectPacks } from "../lib/detect.js";
 import { invocation } from "../lib/eep-on-path.js";
@@ -39,6 +40,9 @@ export type SyncOptions = {
   // does: prompt in a TTY, else keep the existing eep.yaml selection, else detect, else the AGENTS.md
   // baseline (see resolveTools). A shorter selection than last time removes the deselected surfaces.
   tools?: string[];
+  // Blueprint slices to include, meaningful only when a token names a blueprint. Empty or omitted
+  // syncs the blueprint's core alone; a slice whose pack is not built yet is reported and skipped.
+  withSlices?: string[];
   // Omitted means "offer it". Only an explicit false (--no-install-offer) silences both the
   // prompt and the hint, which is what CI and scripted runs want.
   installOffer?: boolean;
@@ -191,7 +195,7 @@ function printNextSteps(packs: string[], profile: WritableProfile): void {
  * the content is testable without capturing stdout.
  */
 export function capabilityScreenLines(corpusDir: string, targetDir: string): string[] {
-  const { available, comingSoon } = listCapabilities(corpusDir);
+  const { available, comingSoon, blueprints } = listCapabilities(corpusDir);
   const lines: string[] = [WHAT_EEP_IS, ""];
 
   lines.push("Available now:");
@@ -200,6 +204,13 @@ export function capabilityScreenLines(corpusDir: string, targetDir: string): str
 
   if (comingSoon.length > 0) {
     lines.push("", "In development:", `  ${comingSoon.join(", ")}`);
+  }
+
+  // A separate group from the framework tokens above: a blueprint expands into a whole pack set
+  // rather than naming one pack, so it is asked for by name and composed, not synced like a token.
+  if (blueprints.length > 0) {
+    lines.push("", "Blueprints (compose a full pack set):");
+    for (const name of blueprints) lines.push(`  ${name}`);
   }
 
   lines.push("", "Usage:", ...usageExamples());
@@ -248,7 +259,20 @@ function rejectUnknownTokens(unknown: string[], corpusDir: string): void {
  * anything the vendor and generate steps throw.
  */
 export async function runSync(opts: SyncOptions): Promise<SyncResult> {
-  const { packs, comingSoon, unknown } = resolveFrameworks(opts.tokens, opts.corpusDir);
+  // A blueprint token expands into its pack set before framework resolution, so the rest of the
+  // sync sees a normal list of packs. resolveBlueprintSelection refuses a blueprint mixed with
+  // other tokens and reports any requested slice whose pack is not built yet; when no token names a
+  // blueprint it returns the tokens untouched.
+  const selection = resolveBlueprintSelection(opts.tokens, opts.withSlices ?? [], opts.corpusDir);
+  const tokens = selection.blueprint === null ? opts.tokens : selection.packs;
+  if (selection.blueprint !== null) {
+    console.log(`eep: blueprint ${selection.blueprint} expands to: ${selection.packs.join(", ")}`);
+    if (selection.pendingSlicePacks.length > 0) {
+      console.log(`eep: coming soon, skipped: ${selection.pendingSlicePacks.join(", ")}`);
+    }
+  }
+
+  const { packs, comingSoon, unknown } = resolveFrameworks(tokens, opts.corpusDir);
   rejectUnknownTokens(unknown, opts.corpusDir);
 
   if (comingSoon.length > 0) {
@@ -289,6 +313,7 @@ type RootCliOptions = {
   yes: boolean;
   installOffer: boolean;
   tools?: string;
+  with?: string;
 };
 
 /**
@@ -310,6 +335,7 @@ export function register(program: Command): void {
       "--tools <tokens>",
       "comma separated AI tools to generate for: claude, agents, copilot, cursor, none",
     )
+    .option("--with <slices>", "comma separated blueprint slices to include (blueprint token only)")
     .action(async (frameworks: string[], options: RootCliOptions) => {
       try {
         const corpusDir = options.corpus ?? corpusRoot();
@@ -325,6 +351,7 @@ export function register(program: Command): void {
           yes: options.yes,
           installOffer: options.installOffer,
           tools: toolsFromFlag(options.tools),
+          withSlices: slicesFromFlag(options.with),
         });
       } catch (error) {
         console.error(error instanceof Error ? error.message : String(error));

@@ -6,7 +6,7 @@ authors:
   - { name: Samar Swami, github: "@samar1066" }
 maintainers: ["@samar1066"]
 created: "2026-08-01"
-updated: "2026-08-02"
+updated: "2026-08-03"
 ---
 
 # Doctrine
@@ -22,10 +22,12 @@ Doctrine is organized as one folder per domain, and each domain folder holds its
 <!-- eep:index -->
 - [architecture](architecture/README.md): layering and dependency direction between modules.
 - [testing](testing/README.md): verified, meaningful test coverage on every change.
-- [security](security/README.md): keeping secrets out of version control and queries safe from injection.
+- [security](security/README.md): keeping secrets out of version control, access least privileged, and data encrypted and safe from injection.
 - [observability](observability/README.md): structured logs and traces that carry a correlation identifier across every process boundary.
 - [delivery](delivery/README.md): continuous integration gates, pinned dependencies, and promotion of one artifact through separated environments.
 - [iac](iac/README.md): infrastructure declared as code with previewed changes, and services packaged as reviewable images.
+- [reliability](reliability/README.md): health checks with automatic rollback on every deployment, and backups with a recovery point for every data store.
+- [cost](cost/README.md): every provisioned resource attributable to an owner and an environment.
 - [frontend](frontend/README.md): user interfaces that pass automated accessibility checks in the build.
 - [documentation](documentation/README.md): governed document frontmatter, writing style, and a README in every folder.
 - [devex](devex/README.md): one command that takes a fresh clone to a working setup.
@@ -36,4 +38,4 @@ Doctrine is organized as one folder per domain, and each domain folder holds its
 None.
 
 ---
-*Authored by Samar Swami (@samar1066) · Maintained by @samar1066 · v1.0.0 · Last reviewed 2026-08-02*
+*Authored by Samar Swami (@samar1066) · Maintained by @samar1066 · v1.0.0 · Last reviewed 2026-08-03*

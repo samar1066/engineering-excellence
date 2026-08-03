@@ -2,6 +2,13 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import type { Command } from "commander";
 import fg from "fast-glob";
+import { parse as parseYaml } from "yaml";
+import {
+  corpusLawIds,
+  corpusPackNames,
+  listBlueprints,
+  validateBlueprintDoc,
+} from "../lib/blueprint.js";
 import { readFrontmatter } from "../lib/frontmatter.js";
 import { scanMarkdownStyle } from "../lib/markdown.js";
 import { repoRoot, validateAgainst } from "../lib/schema.js";
@@ -255,15 +262,114 @@ export async function validateCorpus(root: string = repoRoot()): Promise<Violati
   return violations;
 }
 
+/**
+ * The blueprint check: every `blueprints/<name>/blueprint.yaml` is validated, and its referenced
+ * packs and pillar law ids are cross checked against the corpus.
+ *
+ * The result is split into hard violations, which fail the command, and pending notes, which are
+ * reported but do not fail it. The split follows what each reference promises:
+ *
+ * 1. Schema. A blueprint whose YAML will not parse, or fails blueprint.schema.json, is a hard
+ *    violation. A schema failure stops the deeper checks for that blueprint, since its shape is no
+ *    longer known.
+ * 2. Core packs. Core is the set every composed init of the blueprint always builds, so a core pack
+ *    that does not exist in the corpus is a hard violation: the blueprint cannot compose without it.
+ * 3. Slice packs. A slice is opt in and, by design in an early wave, may reference a pack that is
+ *    not built yet. A missing slice pack is a pending note, never fatal, so the blueprint ships its
+ *    core today and the slice lights up when its pack lands.
+ * 4. Pillar law ids. Pillars are asserted vendor neutral laws the doctrine owns. A pillar id absent
+ *    from doctrine is a pending note rather than a hard violation, because the doctrine that defines
+ *    them can land in a separate wave from the blueprint that references them. Each missing pillar
+ *    is named, so the gap is visible and reconciles to nothing once the doctrine wave lands.
+ *
+ * A corpus with no blueprints returns empty on both, so this is inert until a blueprint exists.
+ */
+export async function inspectBlueprints(
+  root: string,
+): Promise<{ violations: Violation[]; pending: string[] }> {
+  const names = listBlueprints(root);
+  const violations: Violation[] = [];
+  const pending: string[] = [];
+  if (names.length === 0) return { violations, pending };
+
+  const packNames = corpusPackNames(root);
+  const lawIds = corpusLawIds(root);
+
+  for (const name of names) {
+    const relPath = `blueprints/${name}/blueprint.yaml`;
+    let doc: unknown;
+    try {
+      doc = parseYaml(readFileSync(join(root, relPath), "utf8"));
+    } catch (error) {
+      violations.push({
+        path: relPath,
+        line: 1,
+        rule: "blueprint-parse-error",
+        detail: describeParseError(error),
+      });
+      continue;
+    }
+
+    const { valid, errors } = validateBlueprintDoc(doc, root);
+    if (!valid) {
+      for (const detail of errors) {
+        violations.push({ path: relPath, rule: "blueprint-schema", detail });
+      }
+      continue;
+    }
+
+    const blueprint = doc as {
+      core: string[];
+      slices?: Record<string, string[]>;
+      pillars?: string[];
+    };
+
+    for (const pack of blueprint.core) {
+      if (!packNames.has(pack)) {
+        violations.push({
+          path: relPath,
+          rule: "blueprint-core-pack-missing",
+          detail: `core pack ${pack} does not exist in the corpus`,
+        });
+      }
+    }
+
+    for (const [slice, slicePacks] of Object.entries(blueprint.slices ?? {})) {
+      for (const pack of slicePacks) {
+        if (!packNames.has(pack)) {
+          pending.push(`blueprint ${name}: slice ${slice} references pack ${pack}, not built yet`);
+        }
+      }
+    }
+
+    for (const pillar of blueprint.pillars ?? []) {
+      if (!lawIds.has(pillar)) {
+        pending.push(`blueprint ${name}: pillar ${pillar} not found in doctrine yet`);
+      }
+    }
+  }
+
+  return { violations, pending };
+}
+
 export function register(program: Command): void {
   const corpus = program.command("corpus").description("corpus maintenance");
   corpus
     .command("validate")
-    .description("validate style, frontmatter, READMEs, and pack containment")
+    .description("validate style, frontmatter, READMEs, pack containment, and blueprints")
     .action(async () => {
-      const violations = await validateCorpus();
-      for (const v of violations) console.error(`${v.path}:${v.line ?? 1} ${v.rule} ${v.detail}`);
-      console.log(`corpus: ${violations.length} violations`);
-      if (violations.length > 0) process.exitCode = 1;
+      const root = repoRoot();
+      const violations = await validateCorpus(root);
+      const { violations: blueprintViolations, pending } = await inspectBlueprints(root);
+      const all = [...violations, ...blueprintViolations];
+
+      for (const v of all) console.error(`${v.path}:${v.line ?? 1} ${v.rule} ${v.detail}`);
+      // Pending notes are printed but never counted: a wave 1 slice packs and a pillar law the
+      // parallel doctrine wave has not landed yet are expected gaps, not failures (see
+      // inspectBlueprints).
+      for (const note of pending) console.log(`corpus: pending: ${note}`);
+      const pendingSummary = pending.length > 0 ? `, ${pending.length} pending` : "";
+      console.log(`corpus: ${all.length} violations${pendingSummary}`);
+      if (all.length > 0) process.exitCode = 1;
     });
 }

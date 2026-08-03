@@ -35,15 +35,26 @@ npx engineering-excellence fastapi
 
 ## Install
 
-1. **Zero install.** Run everything through `npx engineering-excellence ...`
-   and you are always on the current published version.
-2. **One global install.** `npm install -g engineering-excellence` once, and
-   the command is simply `eep`: `eep verify`, `eep explain EEP-SEC-01`.
+Install once, and the command is simply `eep` everywhere:
 
-At the end of a sync the CLI offers that global install, and prints every next
-step in the form your shell can actually run. The only requirement is Node 22
-or newer; each framework pack names its own toolchain (for example uv and
-Python 3.11 for the FastAPI pack) and tells you when something is missing.
+```bash
+npm install -g engineering-excellence
+```
+
+Prefer no install? Run any command through `npx` and you are always on the
+current published version:
+
+```bash
+npx engineering-excellence fastapi
+```
+
+Both are first class. After a global install you type `eep verify` and
+`eep explain EEP-SEC-01`; without it, prefix the same commands with
+`npx engineering-excellence`. At the end of a sync the CLI offers the global
+install and prints every next step in the form your shell can run. The only
+requirement is Node 22 or newer; each framework pack names its own toolchain
+(for example uv and Python 3.11 for the FastAPI pack) and tells you when
+something is missing.
 
 ## Bring it to an existing repository
 

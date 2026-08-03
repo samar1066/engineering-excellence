@@ -1,0 +1,45 @@
+name: aws-fullstack
+description: A Well Architected full stack AWS application composed from validated packs.
+
+# core is the pack set every aws-fullstack project always gets. Wave 1 lists only packs that
+# already exist in the corpus, so the blueprint composes and validates today: react for the
+# frontend, python-fastapi for the API and domain, aws-cdk for the Fargate infrastructure,
+# containers-k8s for the image definitions, and github-actions for the promotion pipeline.
+#
+# aws-dynamodb, aws-cognito, and aws-s3 join core in later waves, once each ships as its own
+# validated pack with the cross pack wiring the spec describes.
+core:
+  - react
+  - python-fastapi
+  - aws-cdk
+  - containers-k8s
+  - github-actions
+
+# slices are optional pack sets added with `--with <name,...>`. Wave 1 slices are documented
+# placeholders: each maps to a pack that is not built yet, so requesting one composes the core
+# and reports the pending pack rather than failing. They light up as their packs land.
+slices:
+  async: [aws-messaging]
+  search: [aws-opensearch]
+  cache: [aws-elasticache]
+  streaming: [aws-kinesis]
+  sql: [aws-aurora]
+
+# pillars are the cross service laws only a composition can assert. They stay vendor neutral in
+# doctrine so a second cloud blueprint reuses them; the AWS packs bind each one where they can.
+pillars:
+  - EEP-SEC-03
+  - EEP-SEC-04
+  - EEP-REL-01
+  - EEP-REL-02
+  - EEP-COST-01
+
+# wiring is reference documentation for how the packs fit together. It drives no behavior today;
+# the composed wiring step that acts on it lands with the data pack wave.
+wiring:
+  - aws-dynamodb provides the repository implementation for the backend interface
+  - aws-cognito provides the API authorizer for the backend routes
+  - aws-s3 and CloudFront front the react frontend build
+
+authors: [{ name: Samar Swami, github: "@samar1066" }]
+maintainers: ["@samar1066"]

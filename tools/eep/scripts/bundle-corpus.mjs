@@ -14,9 +14,9 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // Everything the CLI reads out of a corpus: the constitution and profiles it vendors, the packs
-// and the doctrine laws they implement, the schemas that validate them, and eep.yaml, which is
-// also one of the two markers corpus-root.ts probes for.
-const ENTRIES = ["CONSTITUTION.md", "doctrine", "packs", "profiles", "schemas", "eep.yaml"];
+// and the doctrine laws they implement, the blueprints that compose those packs, the schemas that
+// validate them, and eep.yaml, which is also one of the two markers corpus-root.ts probes for.
+const ENTRIES = ["CONSTITUTION.md", "blueprints", "doctrine", "packs", "profiles", "schemas", "eep.yaml"];
 
 const packageDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repoRoot = resolve(packageDir, "..", "..");

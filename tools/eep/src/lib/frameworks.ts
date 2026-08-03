@@ -1,5 +1,6 @@
 import { dirname, join } from "node:path";
 import fg from "fast-glob";
+import { availableBlueprints } from "./blueprint.js";
 import { loadPack } from "./pack.js";
 
 export type Capability = { token: string; pack: string };
@@ -146,12 +147,18 @@ export function resolveFrameworks(tokens: string[], corpusDir: string): Framewor
 
 /**
  * What this CLI can do right now, read from the corpus on disk: the tokens backed by a pack that
- * exists, and the roadmap tokens still waiting for one. Packs the corpus carries that the alias
- * table has no entry for are listed under their own name, so nothing shipped is ever hidden.
+ * exists, the roadmap tokens still waiting for one, and the blueprints whose whole core is built.
+ * Packs the corpus carries that the alias table has no entry for are listed under their own name, so
+ * nothing shipped is ever hidden.
+ *
+ * Blueprints are a separate axis from framework tokens: a blueprint expands into a pack set rather
+ * than naming one pack, so it lists in its own group (see commands/root.ts) and is available only
+ * when every core pack it always composes exists (see availableBlueprints).
  */
 export function listCapabilities(corpusDir: string): {
   available: Capability[];
   comingSoon: string[];
+  blueprints: string[];
 } {
   const installed = installedPackNames(corpusDir);
   const available: Capability[] = [];
@@ -165,7 +172,7 @@ export function listCapabilities(corpusDir: string): {
     if (!PRIMARY_TOKEN_BY_PACK.has(pack)) available.push({ token: pack, pack });
   }
 
-  return { available, comingSoon };
+  return { available, comingSoon, blueprints: availableBlueprints(corpusDir) };
 }
 
 // Every spelling resolveFrameworks accepts, sorted, for the message an unknown token earns.

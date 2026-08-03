@@ -3,6 +3,8 @@ import { dirname, join } from "node:path";
 import type { Command } from "commander";
 import { execa } from "execa";
 import fg from "fast-glob";
+import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
+import { resolveBlueprintSelection, slicesFromFlag } from "../lib/blueprint.js";
 import { corpusRoot } from "../lib/corpus-root.js";
 import { invocation } from "../lib/eep-on-path.js";
 import { resolveFrameworks, validTokens } from "../lib/frameworks.js";
@@ -31,8 +33,12 @@ export type InitOptions = {
   corpusDir: string;
   pack?: string;
   // Framework tokens, as typed on the command line. Empty (or omitted) selects the single pack
-  // scaffold; anything else composes one project out of every pack the tokens resolve to.
+  // scaffold; anything else composes one project out of every pack the tokens resolve to. A single
+  // token that names a blueprint expands into that blueprint's pack set (see resolveBlueprintSelection).
   tokens?: string[];
+  // Blueprint slices to include, meaningful only when a token names a blueprint. Each adds its
+  // slice's packs to the composed set; a slice whose pack is not built yet is reported and skipped.
+  withSlices?: string[];
   // Omitted means "offer it". Only an explicit false (--no-install-offer) silences both the
   // prompt and the hint, which is what CI and scripted runs want.
   installOffer?: boolean;
@@ -48,6 +54,22 @@ const PROJECT_NAME_TOKEN = "{{project_name}}";
 
 const GITHUB_DIR = ".github";
 const ROOT_WORKFLOW = `${GITHUB_DIR}/workflows/ci.yml`;
+
+/**
+ * Repository level config files two root packs may each legitimately contribute to, merged rather
+ * than collided.
+ *
+ * `.github/dependabot.yml` is the case the aws-fullstack blueprint is first to hit: containers-k8s
+ * ships an updates entry for the docker ecosystem and github-actions ships one for the github-actions
+ * ecosystem, and dependabot expects both in one file. Refusing the pair as a collision would block a
+ * composition that is entirely correct, and letting the second copy win would silently drop the
+ * first pack's ecosystem, which is exactly the silent replacement the collision guard exists to
+ * prevent. So the file is exempt from that guard (see rejectCollidingRootFiles) and generated as the
+ * union of every root pack's updates entries (see buildRootDependabot), the same way `.gitignore` is
+ * unioned. Workflow files under `.github/workflows/` are deliberately not here: CI is authoritative,
+ * so two packs shipping one workflow stays a hard collision.
+ */
+const MERGED_ROOT_FILES = new Set([`${GITHUB_DIR}/dependabot.yml`]);
 
 /**
  * The files a composed root writes for itself and will not accept from a pack.
@@ -342,6 +364,8 @@ function rejectCollidingRootFiles(placements: Placement[]): void {
   for (const placement of placements) {
     if (placement.componentDir !== null || placement.scaffoldDir === null) continue;
     for (const relPath of scaffoldFiles(placement.scaffoldDir)) {
+      // A merged root file is contributed by design, not collided: see MERGED_ROOT_FILES.
+      if (MERGED_ROOT_FILES.has(relPath)) continue;
       const first = owner.get(relPath);
       if (first !== undefined) {
         throw new Error(
@@ -462,7 +486,14 @@ function planLayout(opts: InitOptions, tokens: string[]): Plan {
     };
   }
 
-  const { packs, comingSoon, unknown } = resolveFrameworks(tokens, opts.corpusDir);
+  // A blueprint token expands into its pack set before framework resolution, so composed init sees
+  // an ordinary list of packs. resolveBlueprintSelection refuses a blueprint mixed with any other
+  // token, and refuses --with when no blueprint was named, both before the project directory
+  // exists. When no token names a blueprint it returns the tokens untouched.
+  const selection = resolveBlueprintSelection(tokens, opts.withSlices ?? [], opts.corpusDir);
+  const effectiveTokens = selection.blueprint === null ? tokens : selection.packs;
+
+  const { packs, comingSoon, unknown } = resolveFrameworks(effectiveTokens, opts.corpusDir);
   rejectUnknownTokens(unknown, opts.corpusDir);
   // Separate from the "no stack pack" refusal below, and worded like the root sync's, because
   // nothing was wrong with what the user typed: every token they named is simply still on the
@@ -475,8 +506,18 @@ function planLayout(opts: InitOptions, tokens: string[]): Plan {
 
   // Printed only once the layout is known to be buildable. A run that is about to abort should say
   // why it aborted, not first report progress on a project it will never create.
+  if (selection.blueprint !== null) {
+    console.log(
+      `eep init: composing blueprint ${selection.blueprint}: ${selection.packs.join(", ")}`,
+    );
+  }
   if (comingSoon.length > 0) {
     console.log(`eep init: coming soon, skipped: ${comingSoon.join(", ")}`);
+  }
+  // A wave 1 slice references a pack that is not built yet, so a requested slice is reported the
+  // same way an unbuilt framework token is, and the core composes without it.
+  if (selection.pendingSlicePacks.length > 0) {
+    console.log(`eep init: coming soon, skipped: ${selection.pendingSlicePacks.join(", ")}`);
   }
 
   return { mode: "composed", packs, placements };
@@ -622,6 +663,56 @@ function buildRootGitignore(destDirs: string[]): string {
   return entries.length === 0 ? "" : `${entries.join("\n")}\n`;
 }
 
+// Identifies one dependabot updates entry for deduplication: an ecosystem watched in a directory is
+// the unit dependabot itself keys on, so two packs naming the same pair contribute one entry, and
+// anything that is not a well formed entry falls back to its serialized form rather than being
+// dropped or merged with an unrelated one.
+function dependabotEntryKey(entry: unknown): string {
+  if (entry === null || typeof entry !== "object") return JSON.stringify(entry);
+  const ecosystem = (entry as { "package-ecosystem"?: unknown })["package-ecosystem"];
+  const directory = (entry as { directory?: unknown }).directory;
+  if (typeof ecosystem === "string" && typeof directory === "string") {
+    return `${ecosystem}::${directory}`;
+  }
+  return JSON.stringify(entry);
+}
+
+/**
+ * The root `.github/dependabot.yml`: one `version: 2` document whose `updates` list is the union of
+ * every root pack's own entries, in first seen order and deduplicated by ecosystem and directory.
+ *
+ * Read from each pack's scaffold (with the project name substituted, so a token in a path resolves)
+ * rather than from the copied tree, because the copy keeps only the last writer at the shared path.
+ * Returns null when no root pack ships one, so the caller writes nothing and a project without any
+ * dependabot config stays that way. Comments in the source files are not carried: the merged file is
+ * generated, and stitching two packs' header comments together would say less than the entries do.
+ */
+function buildRootDependabot(scaffoldDirs: string[], name: string): string | null {
+  const updates: unknown[] = [];
+  const seen = new Set<string>();
+  let found = false;
+
+  for (const dir of scaffoldDirs) {
+    const path = join(dir, `${GITHUB_DIR}/dependabot.yml`);
+    if (!existsSync(path)) continue;
+    found = true;
+    const parsed: unknown = parseYaml(
+      readFileSync(path, "utf8").replaceAll(PROJECT_NAME_TOKEN, name),
+    );
+    const entries = (parsed as { updates?: unknown }).updates;
+    if (!Array.isArray(entries)) continue;
+    for (const entry of entries) {
+      const key = dependabotEntryKey(entry);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      updates.push(entry);
+    }
+  }
+
+  if (!found) return null;
+  return stringifyYaml({ version: 2, updates });
+}
+
 // The composed equivalent of runAdopt's tail, minus detection: a composed root carries no
 // application files of its own to detect a pack from, so the set the user named on the command
 // line is vendored directly. The tool selection was resolved once in runInit and is threaded through
@@ -705,6 +796,25 @@ async function materializeComposed(
 
   const gitignore = buildRootGitignore(destDirs);
   if (gitignore !== "") writeFileSync(join(projectDir, ".gitignore"), gitignore);
+
+  // When two root packs each ship a dependabot config, copyScaffold has left only the last writer at
+  // the shared path, so regenerate it as the union of their updates entries (see buildRootDependabot).
+  // A single contributor is already correct on disk and keeps its own file, comments and all.
+  const dependabotDirs = plan.placements
+    .flatMap((placement) =>
+      placement.componentDir === null && placement.scaffoldDir !== null
+        ? [placement.scaffoldDir]
+        : [],
+    )
+    .filter((dir) => existsSync(join(dir, `${GITHUB_DIR}/dependabot.yml`)));
+  if (dependabotDirs.length > 1) {
+    const dependabot = buildRootDependabot(dependabotDirs, opts.name);
+    if (dependabot !== null) {
+      const dependabotPath = join(projectDir, GITHUB_DIR, "dependabot.yml");
+      mkdirSync(dirname(dependabotPath), { recursive: true });
+      writeFileSync(dependabotPath, dependabot);
+    }
+  }
 
   await gitInitAndCommit(projectDir, composedCommitMessage(plan.packs));
   syncAtRoot(projectDir, opts.corpusDir, plan.packs, tools);
@@ -820,7 +930,13 @@ export async function runInit(opts: InitOptions): Promise<void> {
   if (opts.installOffer !== false) await offerGlobalInstall();
 }
 
-type InitCliOptions = { pack: string; dir: string; installOffer: boolean; tools?: string };
+type InitCliOptions = {
+  pack: string;
+  dir: string;
+  installOffer: boolean;
+  tools?: string;
+  with?: string;
+};
 
 export function register(program: Command): void {
   program
@@ -839,6 +955,7 @@ export function register(program: Command): void {
       "--tools <tokens>",
       "comma separated AI tools to generate for: claude, agents, copilot, cursor, none",
     )
+    .option("--with <slices>", "comma separated blueprint slices to include (blueprint token only)")
     .action(async (name: string, tokens: string[], options: InitCliOptions) => {
       try {
         await runInit({
@@ -849,6 +966,7 @@ export function register(program: Command): void {
           tokens,
           installOffer: options.installOffer,
           tools: toolsFromFlag(options.tools),
+          withSlices: slicesFromFlag(options.with),
         });
       } catch (error) {
         console.error(error instanceof Error ? error.message : String(error));
