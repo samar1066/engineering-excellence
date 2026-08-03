@@ -242,4 +242,64 @@ describe("applyComposedWiring", () => {
     expect(summary.patched.some((entry) => entry.startsWith("backend/"))).toBe(true);
     expect(summary.patched.some((entry) => entry.startsWith("service/"))).toBe(false);
   });
+
+  it("guards the python backend with the Cognito auth dependency and ships its guard test", () => {
+    const projectDir = newProject(["backend"]);
+    const summary = applyComposedWiring({
+      projectDir,
+      corpusDir: CORPUS,
+      name: "shop",
+      placements: [
+        { pack: "aws-cognito", componentDir: "auth" },
+        { pack: "python-fastapi", componentDir: "backend" },
+      ],
+    });
+
+    // Both the guard module and its self contained test land, so the backend covers the guard it runs.
+    expect(existsSync(join(projectDir, "backend/app/api/auth.py"))).toBe(true);
+    expect(existsSync(join(projectDir, "backend/tests/unit/test_auth_guard.py"))).toBe(true);
+
+    const notes = read(projectDir, "backend/app/api/routes/notes.py");
+    expect(notes).toContain("from app.api.auth import require_user");
+    expect(notes).toContain("dependencies=[Depends(require_user)]");
+
+    // The guard is overridden in the API test fixture, so the gate stays green with no live pool.
+    expect(read(projectDir, "backend/tests/conftest.py")).toContain(
+      "dependency_overrides[require_user]",
+    );
+    expect(read(projectDir, "backend/pyproject.toml")).toContain(
+      '"python-jose[cryptography]>=3.3.0",',
+    );
+    expect(summary.providers).toContain("aws-cognito");
+  });
+
+  it("applies both the repository swap and the auth guard when a data and an auth pack compose", () => {
+    const projectDir = newProject(["backend", "infra"]);
+    const summary = applyComposedWiring({
+      projectDir,
+      corpusDir: CORPUS,
+      name: "shop",
+      placements: [
+        { pack: "aws-cognito", componentDir: "auth" },
+        { pack: "aws-dynamodb", componentDir: "data" },
+        { pack: "python-fastapi", componentDir: "backend" },
+        { pack: "aws-cdk", componentDir: "infra" },
+      ],
+    });
+
+    // One backend, both providers: the repository is swapped and the routes are guarded.
+    expect(read(projectDir, "backend/app/api/deps.py")).toContain("DynamoNoteRepository()");
+    expect(read(projectDir, "backend/app/api/routes/notes.py")).toContain(
+      "dependencies=[Depends(require_user)]",
+    );
+    expect(summary.providers).toContain("aws-dynamodb");
+    expect(summary.providers).toContain("aws-cognito");
+
+    // Both constructs compose into the one infra stack. Their injected import order is asserted by the
+    // live composed biome check rather than here; this guards that both landed and neither clobbered.
+    const stack = read(projectDir, "infra/lib/service-stack.ts");
+    expect(stack).toContain('import { NoteTable } from "./note-table";');
+    expect(stack).toContain('import { UserPool } from "./user-pool";');
+    expect(stack).toContain('const notes = new NoteTable(this, "Notes", {');
+  });
 });

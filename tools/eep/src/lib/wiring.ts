@@ -7,11 +7,6 @@ import { findPackDir, loadPack } from "./pack.js";
 // be resolved. Kept in step with commands/init.ts's own PROJECT_NAME_TOKEN.
 const PROJECT_NAME_TOKEN = "{{project_name}}";
 
-// The manifest value that marks a data pack as one whose repository swaps into a backend. It is the
-// trigger the composed wiring pass keys on, alongside the presence of a `wiring` block, so a data
-// pack that ships a construct but no repository is never asked to rewrite a backend.
-const REPOSITORY_PROVIDER = "repository";
-
 /**
  * A pack's placement in the composed tree, narrowed to the two fields the wiring pass needs: which
  * pack, and the component directory its files were rendered into (null for a root placed pack).
@@ -23,8 +18,8 @@ export type WiringPlacement = {
 };
 
 export type WiringSummary = {
-  // The provider packs whose wiring block was applied (a provides: repository pack with a wiring
-  // block and at least one target in the composed set).
+  // The provider packs whose wiring block was applied: any composed pack that declares a wiring
+  // block with at least one target also in the composed set (a repository swap, an auth guard, ...).
   providers: string[];
   // Component relative destinations written, patched, and had a dependency added, for the init log
   // line and for a caller that wants to report what the pass touched.
@@ -277,20 +272,20 @@ function applyRecipe(args: {
  * The composed init wiring pass.
  *
  * Runs over the rendered project tree after every pack scaffold is copied and before the tree is
- * committed, so a repository swap is committed with the scaffold rather than left as an untracked
- * edit. For each composed pack that declares `provides: repository` and a `wiring` block, and for
- * each of that block's targets that is also in the composed set, the target backend's in memory
- * repository is replaced by the provider's adapter behind the unchanged interface: the adapter file
- * is copied in, the composition root's import and construction are rewritten, and the storage client
- * dependency is added to the component's manifest. The infra recipe composes the provider's construct
- * into the platform stack the same way.
+ * committed, so an injected integration is committed with the scaffold rather than left as an
+ * untracked edit. For each composed pack that declares a `wiring` block, and for each of that block's
+ * targets that is also in the composed set, the provider's recipe is applied against the target's
+ * component directory: files are copied in, declared strings in the target are rewritten, and
+ * dependencies are added to the component's manifest. This is how a data pack swaps its repository
+ * behind a backend's unchanged interface, how an auth pack guards a backend's routes, and how either
+ * composes its construct into the infra stack: one generic pass driven by each pack's declared recipe.
  *
  * Every failure is loud. A declared `from` string the rendered file does not contain, a copy source
  * that is missing, or a dependency manifest with no recognizable dependency list all throw, naming
  * the provider, the target, and the file, because a wiring that silently did nothing would ship an
- * application that reads as persisted and is not. A target that is not in the composed set is not a
- * failure: it is simply skipped, which is what lets one data pack declare wiring for several backends
- * and have only the composed ones rewritten.
+ * application that reads as wired (persisted, authenticated) and is not. A target that is not in the
+ * composed set is not a failure: it is simply skipped, which is what lets one provider pack declare
+ * wiring for several backends and have only the composed ones rewritten.
  */
 export function applyComposedWiring(args: {
   projectDir: string;
@@ -310,7 +305,9 @@ export function applyComposedWiring(args: {
   for (const placement of placements) {
     const packDir = findPackDir(corpusDir, placement.pack);
     const manifest = loadPack(packDir).manifest;
-    if (manifest.provides !== REPOSITORY_PROVIDER) continue;
+    // A composed pack is a provider when it declares a wiring block: the block itself is the intent
+    // to integrate into another component, whatever the pack provides (a repository swap, an auth
+    // guard, and so on). The `provides` field names which; the block's presence triggers the pass.
     const wiring = asRecord(manifest.wiring);
     if (wiring === null) continue;
 

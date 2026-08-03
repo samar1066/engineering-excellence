@@ -1,0 +1,7 @@
+{
+  "userPoolIdEnv": "COGNITO_USER_POOL_ID",
+  "clientIdEnv": "COGNITO_CLIENT_ID",
+  "regionEnv": "AWS_REGION",
+  "tokenUse": "access",
+  "signInAlias": "email"
+}

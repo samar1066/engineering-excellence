@@ -1,0 +1,13 @@
+checks:
+  - law: EEP-SEC-04
+    kind: shell
+    command: 'npm run test:construct -- -t "advanced security and a strong password policy"'
+    proves: "The synthesized user pool enforces advanced security and a twelve character password policy across four character classes, asserted against the rendered CloudFormation template with no AWS account involved, so the credentials the pool stores encrypted at rest are strong and compromise is detected."
+  - law: EEP-SEC-03
+    kind: shell
+    command: 'npm run test:construct -- -t "minimal auth flows"'
+    proves: "The synthesized app client enables only the SRP and refresh auth flows, holds no static secret, and suppresses user existence errors, with the admin and plain-password flows asserted absent, so the client carries no privilege its first-party sign-in does not use."
+  - law: EEP-COST-01
+    kind: shell
+    command: 'npm run test:construct -- -t "tags the user pool"'
+    proves: "The synthesized user pool carries owner and environment tags in its UserPoolTags map, asserted against the rendered template, so the resource is attributable in a cost report."

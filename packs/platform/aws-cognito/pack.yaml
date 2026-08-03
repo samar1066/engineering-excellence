@@ -1,0 +1,148 @@
+name: aws-cognito
+kind: platform
+version: 1.0.0
+tier: 1
+source: builtin
+detect:
+  - file: auth/cognito.json
+requires: []
+provides: auth
+component_dir: auth
+workdir: auth
+implements:
+  - EEP-SEC-04
+  - EEP-SEC-03
+  - EEP-COST-01
+declines:
+  - law: EEP-ARCH-01
+    reason: "Backend scoped law owned by the stack pack whose routes this guard protects; the guard is one dependency added behind that application's existing boundary and carries no import graph of its own to point in a direction."
+  - law: EEP-TEST-01
+    reason: "Stack scoped law. The change gating suite belongs to the stack pack that owns the application; the suite this pack ships proves the construct and the guard, not the composed application's coverage of every change."
+  - law: EEP-TEST-03
+    reason: "Stack scoped law. Public behavior coverage is measured over the application source the stack pack scaffolds; a user pool construct and a request guard expose no application behavior of their own to cover."
+  - law: EEP-SEC-01
+    reason: "Stack scoped law. This pack commits no credential material and adds no scanner; the pool id and client id resolve from the deploy environment at run time, and the app client holds no static secret to leak in the first place."
+  - law: EEP-SEC-02
+    reason: "Backend scoped law about assembled query strings. This guard writes no data store query; the string query analyzer belongs to a backend pack that talks to a store."
+  - law: EEP-OBS-01
+    reason: "Backend scoped law. Structured logging is configured once in the service process the stack pack owns; this guard emits through that pipeline rather than standing up a second one."
+  - law: EEP-OBS-02
+    reason: "Backend scoped law. Trace context is initialized in the service startup the stack pack owns; the guard runs inside that runtime rather than starting a span here."
+  - law: EEP-DLV-01
+    reason: "Delivery scoped law. Wiring the gate into automation belongs to the delivery pack that owns .github; this pack contributes checks the pipeline runs rather than the workflow that runs them."
+  - law: EEP-DLV-02
+    reason: "Stack scoped law. This scaffold ships committed lockfiles its own suites restore, while the composed backend's freshness gate belongs to each component's own package manager."
+  - law: EEP-DOCS-01
+    reason: "Docs scoped law. This pack ships bindings and a golden path rather than a governed docs tree; the frontmatter check for the composed repository belongs to the stack pack."
+  - law: EEP-DOCS-02
+    reason: "Docs scoped law already checked across the whole repository by the stack packs' style scan, which reaches this component's markdown too."
+  - law: EEP-DOCS-03
+    reason: "Corpus scoped law; consumer repositories are not required to index every directory."
+  - law: EEP-DEVX-01
+    reason: "Stack scoped law about the repository's one command entry point. The composed root Makefile and each component Makefile own that entry point; this pack installs a guard into those components rather than adding a third."
+toolchain:
+  language: { tool: "TypeScript strict", config: templates/config/tsconfig.json, rationale: "The user pool construct and the TypeScript guard are strict mode TypeScript, the same configuration tsc --noEmit checks against." }
+  runtime: { tool: "python 3.11", rationale: "The Python guard targets the floor the python-fastapi backend declares, so an older interpreter fails at install rather than at import." }
+  iac: { tool: "aws-cdk-lib v2", rationale: "One library defines the user pool construct the aws-cdk pack composes into its service stack, and its template assertions prove the password policy, the least privilege client, and the tags with no AWS account involved." }
+  package_manager: { tool: npm, rationale: "Ships with Node, and npm ci restores the committed lockfile exactly for the TypeScript construct and guard." }
+  formatter: { tool: "biome format", config: templates/config/biome.json, rationale: "One binary formats and lints the TypeScript sources, so the two can never disagree." }
+  linter: { tool: biome, config: templates/config/biome.json, rationale: "Replaces ESLint and Prettier in a single pass, with no plugin graph to maintain." }
+  type_checker: { tool: "tsc --noEmit", config: templates/config/tsconfig.json, rationale: "A misconfigured construct or guard is a type error before it is a failed deployment." }
+  unit_test: { tool: "vitest with aws-cdk-lib assertions", rationale: "Synthesizes the user pool construct in process and asserts on the rendered template, so the password policy, the least privilege client, and the tags are proven with no AWS account involved; the guard's own reject path is exercised in the same run." }
+  declined:
+    - category: integration_test
+      reason: "The integration this pack would own is a real sign-in against a deployed pool. The guard's token validation is proven instead by a unit test against a mocked JWKS and locally minted tokens, which needs no account."
+    - category: boundaries
+      reason: "This pack contributes one guard behind an existing router and a construct with no module graph of its own, so there is no import direction to enforce here."
+    - category: api_test
+      reason: "This component serves no API of its own; the API whose routes this guard protects is tested by the stack pack that builds it."
+    - category: e2e_test
+      reason: "End to end for authentication means driving the running service with a real token, which belongs to the composed application rather than this scaffold."
+    - category: coverage
+      reason: "A coverage percentage over a construct and a guard measures nothing useful; the assertions name the pool properties that matter and the guard test names every way a token can be wrong."
+    - category: mocking
+      reason: "No mocking framework is blessed. The construct assertions synthesize the real construct, and the guard test stubs only the pool's JWKS with pytest monkeypatch so a locally minted token can be verified without a live endpoint."
+    - category: logging
+      reason: "This guard runs inside the service process and emits through the logging pipeline that process configures; it stands up none of its own."
+    - category: tracing
+      reason: "Trace context starts in the service this guard runs inside; the request it authenticates propagates an existing span rather than starting one."
+    - category: hooks
+      reason: "The scaffold ships no hook manager of its own: eep adopt installs the pre commit gate, and the construct and guard suites are the loop before that."
+# How this pack's auth guard swaps into each composed backend, and how its user pool construct
+# composes into the infra stack. Read by the composed init wiring pass (tools/eep/src/lib/wiring.ts),
+# which runs only when this pack is composed with a target that is also in the set. Every from string
+# below is matched verbatim against the rendered file; a from that is not found is a hard error, never
+# a silent no op, so a wiring that would ship an app that looks guarded but is not fails the init.
+wiring:
+  targets:
+    python-fastapi:
+      copy:
+        - from: scaffold/wiring/python/app/api/auth.py
+          to: app/api/auth.py
+        - from: scaffold/wiring/python/tests/test_auth_guard.py
+          to: tests/unit/test_auth_guard.py
+      patch:
+        - file: app/api/routes/notes.py
+          replace:
+            - from: 'from app.api.deps import get_notes_workflow'
+              to: "from app.api.auth import require_user\nfrom app.api.deps import get_notes_workflow"
+            - from: 'router = APIRouter(prefix="/notes", tags=["notes"])'
+              to: 'router = APIRouter(prefix="/notes", tags=["notes"], dependencies=[Depends(require_user)])'
+        - file: app/core/config.py
+          replace:
+            - from: 'from pydantic import BaseModel'
+              to: "import os\n\nfrom pydantic import BaseModel"
+            - from: '    log_level: str = "INFO"'
+              to: "    log_level: str = \"INFO\"\n    aws_region: str = os.environ.get(\"AWS_REGION\", \"us-east-1\")\n    cognito_user_pool_id: str = os.environ.get(\"COGNITO_USER_POOL_ID\", \"\")\n    cognito_client_id: str = os.environ.get(\"COGNITO_CLIENT_ID\", \"\")"
+        - file: tests/conftest.py
+          replace:
+            - from: 'from app.api.deps import get_notes_workflow'
+              to: "from app.api.auth import AuthenticatedUser, require_user\nfrom app.api.deps import get_notes_workflow"
+            - from: '    application.dependency_overrides[get_notes_workflow] = lambda: workflow'
+              to: "    application.dependency_overrides[get_notes_workflow] = lambda: workflow\n    application.dependency_overrides[require_user] = lambda: AuthenticatedUser(sub=\"test-user\")"
+      dependency:
+        - file: pyproject.toml
+          add: 'python-jose[cryptography]>=3.3.0'
+    typescript-node:
+      copy:
+        - from: scaffold/wiring/typescript/src/auth.ts
+          to: src/auth.ts
+      patch:
+        - file: src/app.ts
+          replace:
+            - from: 'import { settings } from "./core/config.js";'
+              to: "import { requireUser } from \"./auth.js\";\nimport { settings } from \"./core/config.js\";"
+            - from: "  repository: NoteRepository = new MemoryNoteRepository(),\n): FastifyInstance {"
+              to: "  repository: NoteRepository = new MemoryNoteRepository(),\n  authGuard: typeof requireUser = requireUser,\n): FastifyInstance {"
+            - from: '  app.register(notesRoutes, { workflow });'
+              to: "  app.register(async (scope) => {\n    scope.addHook(\"preHandler\", authGuard);\n    await scope.register(notesRoutes, { workflow });\n  });"
+        - file: src/core/config.ts
+          replace:
+            - from: '  port: number;'
+              to: "  port: number;\n  cognitoUserPoolId: string;\n  cognitoClientId: string;\n  awsRegion: string;"
+            - from: '  port: Number(process.env.PORT ?? "3000"),'
+              to: "  port: Number(process.env.PORT ?? \"3000\"),\n  cognitoUserPoolId: process.env.COGNITO_USER_POOL_ID ?? \"\",\n  cognitoClientId: process.env.COGNITO_CLIENT_ID ?? \"\",\n  awsRegion: process.env.AWS_REGION ?? \"us-east-1\","
+        - file: test/helpers/app.ts
+          replace:
+            - from: '    app = createApp(new MemoryNoteRepository());'
+              to: "    app = createApp(new MemoryNoteRepository(), async (request) => {\n      request.user = { sub: \"test-user-sub\", username: \"test-user\" };\n    });"
+      dependency:
+        - file: package.json
+          add:
+            - 'aws-jwt-verify@^4.0.1'
+  infra:
+    aws-cdk:
+      copy:
+        - from: scaffold/construct/user-pool.ts
+          to: lib/user-pool.ts
+      patch:
+        - file: lib/service-stack.ts
+          replace:
+            - from: '} from "./environments";'
+              to: "} from \"./environments\";\nimport { UserPool } from \"./user-pool\";"
+            - from: '    this.service = new ecsPatterns.ApplicationLoadBalancedFargateService(this, "Service", {'
+              to: "    const auth = new UserPool(this, \"Auth\", {\n      owner: \"{{project_name}}\",\n      environment: config.stage,\n    });\n\n    this.service = new ecsPatterns.ApplicationLoadBalancedFargateService(this, \"Service\", {"
+            - from: '          IMAGE_TAG: imageTag,'
+              to: "          IMAGE_TAG: imageTag,\n          COGNITO_USER_POOL_ID: auth.pool.userPoolId,\n          COGNITO_CLIENT_ID: auth.client.userPoolClientId,\n          AWS_REGION: this.region,"
+authors: [{ name: Samar Swami, github: "@samar1066" }]
+maintainers: ["@samar1066"]

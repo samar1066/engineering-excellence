@@ -4,16 +4,19 @@ description: A Well Architected full stack AWS application composed from validat
 # core is the pack set every aws-fullstack project always gets. Every pack listed already exists in
 # the corpus, so the blueprint composes and validates today: react for the frontend, python-fastapi
 # for the API and domain, aws-dynamodb for the primary data store behind the backend's repository
-# interface, aws-cdk for the Fargate infrastructure, containers-k8s for the image definitions, and
-# github-actions for the promotion pipeline.
+# interface, aws-cognito for authentication guarding the backend routes, aws-cdk for the Fargate
+# infrastructure, containers-k8s for the image definitions, and github-actions for the promotion
+# pipeline.
 #
-# aws-dynamodb joins core in the data pack wave: the composed init wiring pass swaps the backend's in
+# aws-dynamodb joined core in the data wave: the composed init wiring pass swaps the backend's in
 # memory repository for its DynamoDB adapter and composes its table construct into the infra stack.
-# aws-cognito and aws-s3 join in later waves, once each ships as its own validated pack.
+# aws-cognito joins in the auth wave: its wiring pass guards the backend routes with a Cognito access
+# token check and composes its user pool into the infra stack. aws-s3 joins in a later wave.
 core:
   - react
   - python-fastapi
   - aws-dynamodb
+  - aws-cognito
   - aws-cdk
   - containers-k8s
   - github-actions
@@ -37,8 +40,9 @@ pillars:
   - EEP-REL-02
   - EEP-COST-01
 
-# wiring is reference documentation for how the packs fit together. The first line is now executed
-# by the composed init wiring pass (aws-dynamodb is in core); the rest land with their packs.
+# wiring is reference documentation for how the packs fit together. The first two lines are now
+# executed by the composed init wiring pass (aws-dynamodb and aws-cognito are in core); the S3 line
+# lands with its pack.
 wiring:
   - aws-dynamodb provides the repository implementation for the backend interface
   - aws-cognito provides the API authorizer for the backend routes

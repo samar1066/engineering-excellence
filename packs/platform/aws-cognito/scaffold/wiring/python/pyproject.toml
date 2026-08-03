@@ -1,0 +1,21 @@
+[project]
+name = "auth-guard-contract"
+version = "0.1.0"
+description = "Isolated harness for the Cognito auth guard: the guard module, a reference config, and the access-token validation unit test."
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "pydantic>=2.8",
+    "anyio>=4.0",
+    "python-jose[cryptography]>=3.3.0",
+    "cryptography>=42.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
