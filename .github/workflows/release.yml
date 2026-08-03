@@ -67,9 +67,11 @@ jobs:
       - uses: actions/attest-build-provenance@ef244123eb79f2f7a7e75d99086184180e6d0018 # v1
         with:
           subject-path: tools/eep/engineering-excellence-*.tgz
-      - name: attach the tarball to the GitHub release
+      - name: create the GitHub release with the provenance attested tarball
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           cd tools/eep
-          gh release upload "$GITHUB_REF_NAME" engineering-excellence-*.tgz --clobber || true
+          gh release create "$GITHUB_REF_NAME" engineering-excellence-*.tgz \
+            --title "$GITHUB_REF_NAME" --generate-notes --verify-tag \
+            || gh release upload "$GITHUB_REF_NAME" engineering-excellence-*.tgz --clobber
