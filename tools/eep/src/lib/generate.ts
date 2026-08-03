@@ -332,19 +332,44 @@ function buildSlimLawTable(
 }
 
 /**
+ * Where the router points an agent for one pack's golden path, honoring the tool selection so the row
+ * never names a file this run did not write.
+ *
+ * A pack with no workdir contributes at the repository level and always points at its vendored
+ * STACK.md. A component pack points at whichever per component file the selection actually wrote:
+ * CLAUDE.md when claude is chosen, else AGENTS.md when agents is chosen. When the selection wrote
+ * neither per component file (only copilot or cursor, which are root surfaces with no component copy),
+ * it falls back to the vendored STACK.md, which is present for every vendored pack, so the row always
+ * resolves to a file that exists.
+ */
+function routerLocation(
+  targetDir: string,
+  pack: PackLayout,
+  selected: ReadonlySet<ToolToken>,
+): string {
+  if (pack.workdir === null) return vendoredStackPath(targetDir, pack.name);
+  if (selected.has("claude")) return `${pack.workdir}/${CLAUDE_FILE_NAME}`;
+  if (selected.has("agents")) return `${pack.workdir}/${AGENTS_FILE_NAME}`;
+  return vendoredStackPath(targetDir, pack.name);
+}
+
+/**
  * The router: one row per pack, saying where that pack's golden path is and which directory it
  * governs.
  *
- * A pack with a pinned workdir points at the instruction file this same run writes into that
- * directory, which is what the agent's own tooling will load when it starts working there. A pack
- * without one points at the vendored corpus copy, because a repository level contribution has no
- * directory of its own to be read from.
+ * A pack with a pinned workdir points at the per component instruction file this same run writes into
+ * that directory for the current selection, which is what the agent's own tooling will load when it
+ * starts working there. A pack without one, or a component whose selection wrote no per component file,
+ * points at the vendored corpus copy (see routerLocation).
  */
-function buildRouterSection(targetDir: string, packs: readonly PackLayout[]): string {
+function buildRouterSection(
+  targetDir: string,
+  packs: readonly PackLayout[],
+  selected: ReadonlySet<ToolToken>,
+): string {
   const rows = packs.map((pack) => {
     const component = pack.workdir ?? ROOT_COMPONENT;
-    const location =
-      pack.workdir === null ? vendoredStackPath(targetDir, pack.name) : `${pack.workdir}/CLAUDE.md`;
+    const location = routerLocation(targetDir, pack, selected);
     return `| ${escapeTableCell(component)} | ${escapeTableCell(pack.name)} | ${escapeTableCell(location)} |`;
   });
 
@@ -620,7 +645,7 @@ export function generateAgentFiles(targetDir: string, tools?: readonly ToolToken
   const sections = multi
     ? [
         ...preamble,
-        buildRouterSection(targetDir, packs),
+        buildRouterSection(targetDir, packs, selected),
         buildSlimLawTable(targetDir, laws, packs),
         VERIFY_FOOTER,
       ]
