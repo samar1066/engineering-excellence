@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import type { Command } from "commander";
 import { execa } from "execa";
 import fg from "fast-glob";
@@ -184,6 +184,18 @@ function scaffoldFiles(scaffoldDir: string): string[] {
   return fg.sync("**/*", { cwd: scaffoldDir, dot: true, onlyFiles: true }).sort();
 }
 
+// npm silently drops any file named `.gitignore` from a published tarball (it reads such a file as
+// pack ignore rules rather than shipping it), which is why a generated project used to arrive with
+// no `.gitignore` at all. So a scaffold stores its ignore file as `gitignore`, without the leading
+// dot, which survives publish, and the dot is restored here, on the single path every scaffold file
+// takes into a generated project. The emitted project then carries a real `.gitignore` however the
+// CLI was installed, and running from a source checkout produces the same result as running from the
+// published package. See scripts/bundle-corpus.mjs and packs/*/*/scaffold/gitignore.
+const SCAFFOLD_GITIGNORE = "gitignore";
+function emittedRelPath(relPath: string): string {
+  return basename(relPath) === SCAFFOLD_GITIGNORE ? join(dirname(relPath), ".gitignore") : relPath;
+}
+
 // Every scaffold file is UTF-8 text (no binary assets under packs/*/*/scaffold today), so one
 // read-replace-write pass over every file, dotfiles included, covers the whole tree without a
 // separate binary copy path.
@@ -195,7 +207,7 @@ function copyScaffold(
 ): void {
   for (const relPath of scaffoldFiles(scaffoldDir)) {
     if (skip?.(relPath) === true) continue;
-    const destPath = join(destDir, relPath);
+    const destPath = join(destDir, emittedRelPath(relPath));
     mkdirSync(dirname(destPath), { recursive: true });
     const content = readFileSync(join(scaffoldDir, relPath), "utf8");
     writeFileSync(destPath, content.replaceAll(PROJECT_NAME_TOKEN, name));

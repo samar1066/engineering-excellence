@@ -373,7 +373,7 @@ function writeFixtureStackPack(corpus: string, componentDir: string): void {
   writeFile(corpus, join(packDir, "scaffold", "README.md"), "# {{project_name}} service\n");
   // .eep/cache/ is deliberately shared with the python-fastapi scaffold's ignore list: the root
   // file is a union, and a duplicated entry there would be the first sign it is a concatenation.
-  writeFile(corpus, join(packDir, "scaffold", ".gitignore"), "node_modules/\n.eep/cache/\n");
+  writeFile(corpus, join(packDir, "scaffold", "gitignore"), "node_modules/\n.eep/cache/\n");
 }
 
 function writeFixtureDeliveryPack(corpus: string): void {
@@ -591,13 +591,14 @@ describe("runInit composing several packs", () => {
   });
 
   it("ignores each stack's own build artifacts in its scaffold, so a first commit stays clean", () => {
-    // A generated project runs `git add -A` on its first commit. Anything the scaffold's .gitignore
+    // A generated project runs `git add -A` on its first commit. Anything the scaffold's ignore file
     // misses is committed: editor caches, coverage output, incremental build files, OS cruft. Each
     // scaffold has to ignore the artifacts its own stack actually produces, not just node_modules, and
     // the root ignore is the union of these, so a gap here is a gap in every generated project. These
-    // four in particular (.DS_Store, *.tsbuildinfo, .vite/, htmlcov/) slipped through before.
+    // four in particular (.DS_Store, *.tsbuildinfo, .vite/, htmlcov/) slipped through before. The file
+    // is stored as `gitignore`, without the dot, so npm keeps it in the package (see emittedRelPath).
     const required: Record<string, string[]> = {
-      "packs/stack/python-fastapi/scaffold/.gitignore": [
+      "packs/stack/python-fastapi/scaffold/gitignore": [
         ".venv/",
         "__pycache__/",
         ".pytest_cache/",
@@ -606,45 +607,45 @@ describe("runInit composing several packs", () => {
         "htmlcov/",
         ".DS_Store",
       ],
-      "packs/stack/react/scaffold/.gitignore": [
+      "packs/stack/react/scaffold/gitignore": [
         "node_modules/",
         "dist/",
         ".vite/",
         "*.tsbuildinfo",
         ".DS_Store",
       ],
-      "packs/stack/typescript-node/scaffold/.gitignore": [
+      "packs/stack/typescript-node/scaffold/gitignore": [
         "node_modules/",
         "dist/",
         "*.tsbuildinfo",
         ".DS_Store",
       ],
-      "packs/platform/aws-cdk/scaffold/.gitignore": [
+      "packs/platform/aws-cdk/scaffold/gitignore": [
         "node_modules/",
         "cdk.out/",
         "*.tsbuildinfo",
         ".DS_Store",
       ],
-      "packs/platform/aws-serverless/scaffold/.gitignore": [
+      "packs/platform/aws-serverless/scaffold/gitignore": [
         "node_modules/",
         "cdk.out/",
         "*.tsbuildinfo",
         ".DS_Store",
       ],
-      "packs/platform/aws-s3/scaffold/.gitignore": [
+      "packs/platform/aws-s3/scaffold/gitignore": [
         "node_modules/",
         "cdk.out/",
         "*.tsbuildinfo",
         ".DS_Store",
       ],
-      "packs/platform/aws-cognito/scaffold/.gitignore": [
+      "packs/platform/aws-cognito/scaffold/gitignore": [
         "node_modules/",
         "cdk.out/",
         "*.tsbuildinfo",
         "htmlcov/",
         ".DS_Store",
       ],
-      "packs/data/aws-dynamodb/scaffold/.gitignore": [
+      "packs/data/aws-dynamodb/scaffold/gitignore": [
         "node_modules/",
         "cdk.out/",
         "*.tsbuildinfo",
@@ -661,6 +662,21 @@ describe("runInit composing several packs", () => {
         expect(lines, `${scaffold} must ignore ${entry}`).toContain(entry);
       }
     }
+  });
+
+  it("stores scaffold ignore files as `gitignore`, which npm keeps, not `.gitignore`, which it strips", () => {
+    // npm silently drops any file named `.gitignore` from a published tarball, so a scaffold that
+    // ships its ignore under that name arrives empty from the registry and every generated project
+    // has no ignore file at all (this shipped once, in 0.10.1). The scaffolds store `gitignore`,
+    // without the dot; copyScaffold restores it on the way out (emittedRelPath). Guard the naming so
+    // the strip-on-publish regression cannot return: a pack shipping a scaffold `.gitignore` fails here.
+    const stripped = fg.sync("packs/*/*/scaffold/**/.gitignore", { cwd: corpusDir, dot: true });
+    expect(
+      stripped,
+      `these are named .gitignore and npm will strip them on publish: ${stripped.join(", ")}`,
+    ).toEqual([]);
+    const kept = fg.sync("packs/*/*/scaffold/gitignore", { cwd: corpusDir });
+    expect(kept.length).toBeGreaterThan(0);
   });
 
   it("vendors every composed pack into one .eep, one eep.yaml, and one set of agent files", async () => {
