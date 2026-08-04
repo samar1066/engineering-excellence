@@ -60,6 +60,19 @@ rather than a vulnerability in the program; and a vulnerability in a third party
 tool that a pack blesses, which belongs upstream first, though we do want to
 hear about it so the pack can pin, patch, or move.
 
+## Known advisories
+
+Advisories a scanner may surface, and where they stand.
+
+1. **GHSA-rgw5-rvv9-x895 (`brace-expansion`, low).** A denial of service in
+   `brace-expansion`, vendored inside `aws-cdk-lib`. It reaches a repository only
+   through the AWS CDK infrastructure packs, runs at `cdk synth` and deploy time,
+   and is never present in a built Lambda or Fargate application at run time.
+   Because the affected copy is bundled inside `aws-cdk-lib`, an npm override
+   cannot reach it and the latest `aws-cdk-lib` still carries it; it clears when
+   AWS re-bundles the patched release. Per the scope note above, a third party
+   tool's own vulnerability belongs upstream first.
+
 ## Disclosure timeline
 
 1. Acknowledgment within 7 days of a report arriving through
