@@ -1,8 +1,19 @@
+# Dependencies and CDK synth output
 node_modules/
 cdk.out/
+.cdk.staging/
+*.tsbuildinfo
+
+# Python caches and coverage (the guard suite)
 __pycache__/
+*.py[cod]
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
 *.egg-info/
 .venv/
+.coverage
+htmlcov/
+
+# OS
+.DS_Store

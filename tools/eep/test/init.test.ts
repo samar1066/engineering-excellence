@@ -590,6 +590,79 @@ describe("runInit composing several packs", () => {
     expect(lines.filter((line) => line === ".eep/cache/")).toHaveLength(1);
   });
 
+  it("ignores each stack's own build artifacts in its scaffold, so a first commit stays clean", () => {
+    // A generated project runs `git add -A` on its first commit. Anything the scaffold's .gitignore
+    // misses is committed: editor caches, coverage output, incremental build files, OS cruft. Each
+    // scaffold has to ignore the artifacts its own stack actually produces, not just node_modules, and
+    // the root ignore is the union of these, so a gap here is a gap in every generated project. These
+    // four in particular (.DS_Store, *.tsbuildinfo, .vite/, htmlcov/) slipped through before.
+    const required: Record<string, string[]> = {
+      "packs/stack/python-fastapi/scaffold/.gitignore": [
+        ".venv/",
+        "__pycache__/",
+        ".pytest_cache/",
+        ".mypy_cache/",
+        ".ruff_cache/",
+        "htmlcov/",
+        ".DS_Store",
+      ],
+      "packs/stack/react/scaffold/.gitignore": [
+        "node_modules/",
+        "dist/",
+        ".vite/",
+        "*.tsbuildinfo",
+        ".DS_Store",
+      ],
+      "packs/stack/typescript-node/scaffold/.gitignore": [
+        "node_modules/",
+        "dist/",
+        "*.tsbuildinfo",
+        ".DS_Store",
+      ],
+      "packs/platform/aws-cdk/scaffold/.gitignore": [
+        "node_modules/",
+        "cdk.out/",
+        "*.tsbuildinfo",
+        ".DS_Store",
+      ],
+      "packs/platform/aws-serverless/scaffold/.gitignore": [
+        "node_modules/",
+        "cdk.out/",
+        "*.tsbuildinfo",
+        ".DS_Store",
+      ],
+      "packs/platform/aws-s3/scaffold/.gitignore": [
+        "node_modules/",
+        "cdk.out/",
+        "*.tsbuildinfo",
+        ".DS_Store",
+      ],
+      "packs/platform/aws-cognito/scaffold/.gitignore": [
+        "node_modules/",
+        "cdk.out/",
+        "*.tsbuildinfo",
+        "htmlcov/",
+        ".DS_Store",
+      ],
+      "packs/data/aws-dynamodb/scaffold/.gitignore": [
+        "node_modules/",
+        "cdk.out/",
+        "*.tsbuildinfo",
+        "htmlcov/",
+        ".DS_Store",
+      ],
+    };
+
+    for (const [scaffold, entries] of Object.entries(required)) {
+      const lines = readFileSync(join(corpusDir, scaffold), "utf8")
+        .split("\n")
+        .map((line) => line.trim());
+      for (const entry of entries) {
+        expect(lines, `${scaffold} must ignore ${entry}`).toContain(entry);
+      }
+    }
+  });
+
   it("vendors every composed pack into one .eep, one eep.yaml, and one set of agent files", async () => {
     const targetDir = newTargetDir("eep-init-composed-sync-");
     const corpus = newComposedCorpus();

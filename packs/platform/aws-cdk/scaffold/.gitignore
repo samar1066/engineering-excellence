@@ -1,2 +1,13 @@
+# Dependencies and CDK synth output
 node_modules/
 cdk.out/
+.cdk.staging/
+
+# Caches and coverage
+*.tsbuildinfo
+coverage/
+
+# Environment and OS
+.env
+.env.*
+.DS_Store
