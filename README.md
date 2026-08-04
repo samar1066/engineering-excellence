@@ -49,12 +49,16 @@ Install once, and the command is simply `eep` everywhere:
 npm install -g engineering-excellence
 ```
 
-Prefer no install? Run any command through `npx` and you are always on the
-current published version:
+Prefer no install? Run any command through `npx`:
 
 ```bash
-npx engineering-excellence fastapi
+npx engineering-excellence@latest fastapi
 ```
+
+The `@latest` matters: a bare `npx engineering-excellence` can reuse a build npx
+cached from an earlier run, so a flag added in a newer release may read as an
+unknown option until that cache turns over. The global install above sidesteps
+this entirely, since `eep` always runs the version you installed.
 
 Both are first class. After a global install you type `eep verify` and
 `eep explain EEP-SEC-01`; without it, prefix the same commands with
