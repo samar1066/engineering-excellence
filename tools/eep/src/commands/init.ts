@@ -14,7 +14,11 @@ import {
   lockedPackLayout,
   rootSurfaceFiles,
 } from "../lib/generate.js";
-import { offerGlobalInstall } from "../lib/install-offer.js";
+import {
+  defaultSetupOfferDeps,
+  offerComponentSetup,
+  offerGlobalInstall,
+} from "../lib/install-offer.js";
 import { findPackDir, loadPack } from "../lib/pack.js";
 import type { ToolToken } from "../lib/tools.js";
 import { vendorInto } from "../lib/vendor.js";
@@ -52,6 +56,10 @@ export type InitOptions = {
   // Omitted means "offer it". Only an explicit false (--no-install-offer) silences both the
   // prompt and the hint, which is what CI and scripted runs want.
   installOffer?: boolean;
+  // Omitted means "offer make setup" (interactive only, defaulting to yes) so a fresh scaffold's
+  // first eep verify passes. Only an explicit false (--no-setup) skips the offer entirely, which is
+  // what CI and scripted runs want; a non interactive run skips it regardless. See install-offer.ts.
+  runSetup?: boolean;
   // The AI coding tools to generate for, as raw tokens. Undefined resolves one the same way adopt
   // does: prompt in a TTY, else the AGENTS.md baseline for a fresh project (see resolveTools). The
   // selection is resolved once and threaded into whichever materialize path runs.
@@ -330,12 +338,17 @@ async function gitCommitGeneratedArtifacts(
   });
 }
 
-// Two lines: the first is the fastest loop a fresh project can run, the second names the whole
-// gate. The gate is named in exactly one form, the one this shell can run: a bare `eep` is on PATH
-// only after a global install, and anyone who reached this CLI through npx alone runs the npx form
-// (which is also what the scaffold's own `make verify` target and pre-commit hook fall back to).
-// Printing both, as this once did, left every reader to work out which half applied to them.
-function printNextSteps(name: string): void {
+// After a fresh init. If make setup has already run, the gate is green, so the one command worth
+// naming next is the gate itself. Otherwise two lines: the fastest loop, and the whole gate named
+// in the one form this shell can run (a bare `eep` resolves only after a global install; an npx
+// caller runs the npx form, which is also what the scaffold's make verify target and hook fall
+// back to). Printing both unconditionally, as this once did, left readers to work out which half
+// applied to them.
+function printNextSteps(name: string, setupDone: boolean): void {
+  if (setupDone) {
+    console.log(`eep init: next steps: cd ${name} && ${invocation()} verify`);
+    return;
+  }
   console.log(`eep init: next steps: cd ${name} && make setup && make test`);
   console.log(`eep init: full gate: ${invocation()} verify from the project`);
 }
@@ -969,8 +982,6 @@ export async function runInit(opts: InitOptions): Promise<void> {
     // guarded block: a repository left with a scaffold commit and uncommitted governance is exactly
     // the half built state cleanupProjectDir exists to prevent.
     await gitCommitGeneratedArtifacts(projectDir, tools);
-
-    printNextSteps(opts.name);
   } catch (error) {
     cleanupProjectDir(projectDir, projectDirExistedBefore);
     if (error instanceof Error) {
@@ -980,9 +991,14 @@ export async function runInit(opts: InitOptions): Promise<void> {
     throw new Error(`${String(error)}; cleaned up ${projectDir}`);
   }
 
-  // Outside the cleanup guarded block on purpose. The catch above rethrows, so this runs only
-  // after a complete success, and an offer to install a convenience shim can never reach the path
-  // that deletes the project it just built.
+  // Outside the cleanup guarded block on purpose. The catch above rethrows, so both of these run
+  // only after a complete success, and neither installing the project's dependencies nor offering
+  // the global shim can reach the path that deletes the project it just built. Setup is offered
+  // first, defaulting to yes, so a fresh scaffold's first eep verify passes instead of failing
+  // every check that needs an installed toolchain; the next-steps line then reflects whether it ran.
+  const setupDone =
+    opts.runSetup === false ? false : await offerComponentSetup(defaultSetupOfferDeps(projectDir));
+  printNextSteps(opts.name, setupDone);
   if (opts.installOffer !== false) await offerGlobalInstall();
 }
 
@@ -990,6 +1006,7 @@ type InitCliOptions = {
   pack: string;
   dir: string;
   installOffer: boolean;
+  setup: boolean;
   tools?: string;
   with?: string;
   backend?: string;
@@ -1010,6 +1027,10 @@ export function register(program: Command): void {
     .option("--dir <target>", "directory to create the project under", process.cwd())
     .option("--no-install-offer", "skip the global install offer and its hint (CI and scripts)")
     .option(
+      "--no-setup",
+      "skip installing the project's dependencies after scaffolding (CI and scripts)",
+    )
+    .option(
       "--tools <tokens>",
       "comma separated AI tools to generate for: claude, agents, copilot, cursor, none",
     )
@@ -1028,6 +1049,7 @@ export function register(program: Command): void {
           pack: options.pack,
           tokens,
           installOffer: options.installOffer,
+          runSetup: options.setup,
           tools: toolsFromFlag(options.tools),
           withSlices: slicesFromFlag(options.with),
           backend: options.backend,
