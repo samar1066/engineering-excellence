@@ -121,7 +121,7 @@ function writeFixtureStackPack(corpus: string, stack: FixtureStack): void {
     join(packDir, "scaffold", "README.md"),
     `# {{project_name}} ${stack.dir}\n\nOne component of a composed repository.\n`,
   );
-  write(corpus, join(packDir, "scaffold", ".gitignore"), "node_modules/\n.eep/cache/\n");
+  write(corpus, join(packDir, "scaffold", "gitignore"), "node_modules/\n.eep/cache/\n");
   // A workflow the composed root must refuse to copy into the component: it gates this stack as
   // though it were the whole repository, which is exactly what it stops being here.
   write(
