@@ -48,8 +48,16 @@ jobs:
       # Node 22 bundles npm 10, which signs provenance but cannot perform the
       # trusted publishing token exchange; that arrived in npm 11.5.
       - run: npm install -g npm@11.6.1
-      - run: npm ci
+      - name: install dependencies, retrying transient registry errors
         working-directory: tools/eep
+        run: |
+          for i in 1 2 3; do
+            if npm ci; then exit 0; fi
+            echo "npm ci attempt $i failed; retrying after backoff" >&2
+            sleep $((i * 10))
+          done
+          echo "npm ci failed after 3 attempts" >&2
+          exit 1
       - name: guard tag matches package version
         run: |
           TAG="${GITHUB_REF_NAME#v}"
@@ -65,13 +73,23 @@ jobs:
       # A GitHub native build provenance attestation over the release artifact,
       # discoverable on the repository and by supply chain auditors.
       - uses: actions/attest-build-provenance@ef244123eb79f2f7a7e75d99086184180e6d0018 # v1
+        id: attest
         with:
           subject-path: tools/eep/engineering-excellence-*.tgz
-      - name: create the GitHub release with the provenance attested tarball
+      - name: create the GitHub release with the tarball and its provenance bundle
         env:
           GH_TOKEN: ${{ github.token }}
+          # A path produced by the attest step, not untrusted input, but bound through env and quoted
+          # rather than interpolated into the shell, per workflow-injection hygiene.
+          BUNDLE_PATH: ${{ steps.attest.outputs.bundle-path }}
         run: |
           cd tools/eep
-          gh release create "$GITHUB_REF_NAME" engineering-excellence-*.tgz \
+          tgz="$(ls engineering-excellence-*.tgz)"
+          # Attach the SLSA provenance bundle as a release asset. The attestation itself lives in
+          # GitHub's attestation store, which supply chain scanners (OpenSSF Scorecard's
+          # Signed-Releases among them) do not read; a provenance asset on the release is what they
+          # look for, and it lets a consumer verify the tarball offline against this bundle.
+          cp "$BUNDLE_PATH" "${tgz}.intoto.jsonl"
+          gh release create "$GITHUB_REF_NAME" "$tgz" "${tgz}.intoto.jsonl" \
             --title "$GITHUB_REF_NAME" --generate-notes --verify-tag \
-            || gh release upload "$GITHUB_REF_NAME" engineering-excellence-*.tgz --clobber
+            || gh release upload "$GITHUB_REF_NAME" "$tgz" "${tgz}.intoto.jsonl" --clobber
