@@ -1,6 +1,13 @@
+# Dependencies and build output
 node_modules/
 dist/
+
+# Caches and coverage
 coverage/
+*.tsbuildinfo
+
+# eep, environment, editor, and OS
 .eep/cache/
 .env
 .env.*
+.DS_Store
