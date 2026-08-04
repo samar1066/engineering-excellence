@@ -39,7 +39,7 @@ declines:
   - law: EEP-DOCS-03
     reason: "Corpus scoped law; consumer repositories are not required to index every directory."
   - law: EEP-DEVX-01
-    reason: "Stack scoped law about the repository's one command entry point. The composed root Makefile and each component Makefile own that entry point; this pack composes its constructs into the infra stack rather than adding a third."
+    reason: "Stack scoped law about the repository's one command entry point. This scaffold still ships a Makefile whose setup target the composed root Makefile fans out to."
 toolchain:
   language: { tool: "TypeScript strict", config: templates/config/tsconfig.json, rationale: "The frontend hosting and uploads bucket constructs are strict mode TypeScript, the same configuration tsc --noEmit checks against." }
   iac: { tool: "aws-cdk-lib v2", rationale: "One library defines the two constructs the aws-cdk pack composes into its service stack, and its template assertions prove the private encrypted buckets, the origin access control, the HTTPS only edge, the single page error mapping, and the tags with no AWS account involved." }
