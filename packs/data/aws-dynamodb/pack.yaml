@@ -40,7 +40,7 @@ declines:
   - law: EEP-DOCS-03
     reason: "Corpus scoped law; consumer repositories are not required to index every directory."
   - law: EEP-DEVX-01
-    reason: "Stack scoped law about the repository's one command entry point. The composed root Makefile and each component Makefile own that entry point; this pack installs adapters into those components rather than adding a third."
+    reason: "Stack scoped law about the repository's one command entry point. This scaffold still ships a Makefile whose setup target the composed root Makefile fans out to."
 toolchain:
   language: { tool: "TypeScript strict", config: templates/config/tsconfig.json, rationale: "The table construct and the TypeScript adapter are strict mode TypeScript, the same configuration tsc --noEmit checks against." }
   runtime: { tool: "python 3.11", rationale: "The Python adapter targets the floor the python-fastapi backend declares, so an older interpreter fails at install rather than at import." }

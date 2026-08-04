@@ -1,6 +1,6 @@
 {
   "name": "engineering-excellence",
-  "version": "0.10.2",
+  "version": "0.10.3",
   "description": "Build a complete Well-Architected AWS full stack app (React, FastAPI, DynamoDB, Cognito, S3, CloudFront, CDK) from one command, or add doctrine, golden paths, generated AI coding agent instructions, and machine enforced gates to any repository",
   "license": "Apache-2.0",
   "author": "Samar Swami (@samar1066)",
